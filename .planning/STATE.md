@@ -11,7 +11,7 @@
 **Phase:** 4 of 6 (Inventor Extraction)
 **Plan:** 3 of 5 complete
 **Status:** In progress
-**Last activity:** 2026-01-19 - Completed 04-03-PLAN.md (material and mass extraction)
+**Last activity:** 2026-01-19 - Completed 04-02-PLAN.md (STEP geometry export)
 
 **Progress:** [#########.] 10/12 plans complete (Phases 1-3, 04-01 to 04-03)
 
@@ -113,29 +113,27 @@ None currently.
 ### Last Session
 
 **Date:** 2026-01-19
-**Work Done:** Completed 04-03-PLAN.md (material and mass extraction)
-- extract_material() reading from PhysicalPropertiesAsset
-- extract_mass_properties() using XYZMomentsOfInertia()
-- Locale-agnostic property searching
-- 10 unit tests for property extraction
-**Stopping Point:** Plan 04-03 complete; ready for 04-04 (full pipeline)
+**Work Done:** Completed 04-02-PLAN.md (STEP geometry export)
+- export_step() via TranslatorAddIn with CastTo
+- export_unique_parts() with deduplication by definition_path
+- AP214 protocol default for better compatibility
+- 21 unit tests for geometry export with mocked COM
+**Stopping Point:** Plan 04-02 complete; 04-01, 04-02, 04-03 all done
 
 ### Commits This Session
 
 | Hash | Description |
 |------|-------------|
-| 2707129 | feat(04-03): implement material extraction from Inventor parts |
-| af7c649 | feat(04-03): implement mass property extraction from Inventor parts |
-| 135cef2 | test(04-03): add unit tests for material and mass extraction |
-| f9b7694 | chore(04-03): export material and mass extraction from package |
+| 6e68281 | feat(04-02): implement STEP export via TranslatorAddIn |
+| 52823e1 | test(04-02): add unit tests for STEP geometry export |
 
 ### Next Session
 
-**Resume At:** Plan 04-04 (full extraction pipeline) or 04-05 (integration tests)
+**Resume At:** Plan 04-04 (full extraction pipeline)
 **Context Needed:** None additional
 **First Action:** `/gsd:execute-phase` for 04-04
 
 ---
 
 *State initialized: 2026-01-19*
-*Last updated: 2026-01-19 after 04-03 completion*
+*Last updated: 2026-01-19 after 04-02 completion*
