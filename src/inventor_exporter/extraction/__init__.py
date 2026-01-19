@@ -1,23 +1,23 @@
-"""Extraction package - Inventor COM API data extraction.
+"""Extraction package - Inventor data extraction.
 
-This package provides functions to extract assembly data from Inventor
-via the COM API. The extracted data populates the intermediate representation
-(IR) defined in the model package.
-
-Functions:
-    traverse_assembly: Walk assembly hierarchy, return all leaf occurrences
-    extract_transform: Convert Inventor Matrix to Transform dataclass
-    extract_material: Extract material name and density from part
-    extract_mass_properties: Extract mass, CoM, and inertia tensor from part
-    export_step: Export document to STEP format via TranslatorAddIn
-    export_unique_parts: Export STEP for unique parts (deduplicated)
+This package provides functions and classes for extracting assembly data
+from Autodesk Inventor via COM automation.
 
 Classes:
-    OccurrenceData: Data holder for a single leaf occurrence
+    InventorClient: High-level orchestrator for complete assembly extraction.
+    OccurrenceData: Data holder for a single leaf occurrence.
+
+Functions:
+    traverse_assembly: Walk assembly hierarchy, collect leaf occurrences.
+    extract_transform: Get Transform from occurrence.
+    export_step: Export single document to STEP format.
+    export_unique_parts: Export STEP for unique part definitions.
+    extract_material: Get Material from part document.
+    extract_mass_properties: Get Inertia from part definition.
 
 Constants:
-    STEP_TRANSLATOR_GUID: GUID for STEP TranslatorAddIn
-    AP203, AP214, AP242: Application Protocol types for STEP export
+    STEP_TRANSLATOR_GUID: GUID for STEP TranslatorAddIn.
+    AP203, AP214, AP242: Application Protocol types for STEP export.
 """
 
 from inventor_exporter.extraction.assembly import (
@@ -35,17 +35,19 @@ from inventor_exporter.extraction.geometry import (
 )
 from inventor_exporter.extraction.mass import extract_mass_properties
 from inventor_exporter.extraction.material import extract_material
+from inventor_exporter.extraction.client import InventorClient
 
 __all__ = [
+    "InventorClient",
     "traverse_assembly",
     "extract_transform",
     "OccurrenceData",
-    "extract_material",
-    "extract_mass_properties",
+    "export_step",
+    "export_unique_parts",
     "STEP_TRANSLATOR_GUID",
     "AP203",
     "AP214",
     "AP242",
-    "export_step",
-    "export_unique_parts",
+    "extract_material",
+    "extract_mass_properties",
 ]
