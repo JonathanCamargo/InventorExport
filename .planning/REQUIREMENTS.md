@@ -1,0 +1,138 @@
+# Requirements: Inventor Assembly Exporter
+
+**Defined:** 2026-01-19
+**Core Value:** Adding a new export format should only require implementing a format-specific writer
+
+## v1 Requirements
+
+Requirements for initial release. Each maps to roadmap phases.
+
+### Infrastructure
+
+- [ ] **INFRA-01**: Python connects to Inventor via COM with proper lifecycle management
+- [ ] **INFRA-02**: COM objects are cleaned up deterministically (context managers, no memory leaks)
+- [ ] **INFRA-03**: Unit conversion utilities convert between Inventor internal units and export format units
+- [ ] **INFRA-04**: Transform utilities convert rotation matrices to Euler angles and quaternions
+- [ ] **INFRA-05**: Transform utilities handle format-specific rotation conventions (XYZ, RPY, quaternion)
+- [ ] **INFRA-06**: Logging infrastructure provides debug output and error tracking
+
+### Data Model
+
+- [ ] **MODEL-01**: AssemblyModel dataclass represents complete assembly structure
+- [ ] **MODEL-02**: Body dataclass captures part instance with name, transform, geometry reference, material
+- [ ] **MODEL-03**: Material dataclass captures density and physical properties
+- [ ] **MODEL-04**: Transform dataclass captures position (translation) and orientation (rotation matrix)
+- [ ] **MODEL-05**: Inertia tensor handled with proper reference frame transformations
+- [ ] **MODEL-06**: Model validation catches invalid/incomplete data before export
+
+### Extraction
+
+- [ ] **EXTRACT-01**: InventorClient connects to running Inventor instance
+- [ ] **EXTRACT-02**: Assembly traversal walks hierarchy and collects leaf occurrences
+- [ ] **EXTRACT-03**: Transformation extraction gets position and orientation from occurrence matrix
+- [ ] **EXTRACT-04**: Transform accumulation handles nested subassemblies correctly
+- [ ] **EXTRACT-05**: STEP export generates geometry files for each unique part
+- [ ] **EXTRACT-06**: Material extraction reads actual material properties from parts
+- [ ] **EXTRACT-07**: Mass property extraction gets mass and inertia tensor from Inventor
+
+### Format Writing
+
+- [ ] **WRITER-01**: FormatWriter Protocol defines interface for all format writers
+- [ ] **WRITER-02**: WriterRegistry discovers and selects writers by format name
+- [ ] **WRITER-03**: ADAMS writer generates rigid body definitions (VBA parity)
+- [ ] **WRITER-04**: ADAMS writer generates material property section
+- [ ] **WRITER-05**: ADAMS writer generates geometry property section with STEP references
+- [ ] **WRITER-06**: ADAMS output matches VBA output for same input assembly
+- [ ] **WRITER-07**: URDF writer generates valid URDF XML with bodies and geometry
+- [ ] **WRITER-08**: URDF writer handles coordinate conventions (meters, RPY angles)
+- [ ] **WRITER-09**: MuJoCo writer generates valid MJCF XML with bodies and geometry
+- [ ] **WRITER-10**: MuJoCo writer handles coordinate conventions (meters, quaternions)
+
+### CLI
+
+- [ ] **CLI-01**: User can run exporter from command line
+- [ ] **CLI-02**: User can select output format via --format flag (adams, urdf, mujoco)
+- [ ] **CLI-03**: User can specify output path via --output flag
+- [ ] **CLI-04**: User receives clear error messages for invalid input
+- [ ] **CLI-05**: User can list available formats via --list-formats
+
+## v2 Requirements
+
+Deferred to future release. Tracked but not in current roadmap.
+
+### Joint Extraction
+
+- **JOINT-01**: Constraint analysis detects joint relationships between parts
+- **JOINT-02**: Joint type detection maps Inventor constraints to joint types (revolute, prismatic, fixed)
+- **JOINT-03**: Joint limits extraction gets motion limits from Inventor constraints
+- **JOINT-04**: URDF writer includes joint definitions
+- **JOINT-05**: MuJoCo writer includes joint definitions
+
+### Advanced Features
+
+- **ADV-01**: Collision geometry generation (simplified meshes)
+- **ADV-02**: Assembly validation before export
+- **ADV-03**: Batch export of multiple assemblies
+
+## Out of Scope
+
+Explicitly excluded. Documented to prevent scope creep.
+
+| Feature | Reason |
+|---------|--------|
+| GUI interface | CLI sufficient for automation workflows; scope creep risk |
+| Bi-directional sync | Massive complexity; read-only export is the goal |
+| Multi-CAD support | Each CAD API is different; Inventor-only focus |
+| Automatic mesh simplification | Export full geometry; let simulation tools simplify |
+| Joint extraction (v1) | High complexity; research spike needed; achieves VBA parity first |
+| Embedded geometry | STEP files referenced externally; no mesh embedding |
+
+## Traceability
+
+Which phases cover which requirements. Updated during roadmap creation.
+
+| Requirement | Phase | Status |
+|-------------|-------|--------|
+| INFRA-01 | Phase 1 | Pending |
+| INFRA-02 | Phase 1 | Pending |
+| INFRA-03 | Phase 1 | Pending |
+| INFRA-04 | Phase 1 | Pending |
+| INFRA-05 | Phase 1 | Pending |
+| INFRA-06 | Phase 1 | Pending |
+| MODEL-01 | Phase 2 | Pending |
+| MODEL-02 | Phase 2 | Pending |
+| MODEL-03 | Phase 2 | Pending |
+| MODEL-04 | Phase 2 | Pending |
+| MODEL-05 | Phase 2 | Pending |
+| MODEL-06 | Phase 2 | Pending |
+| WRITER-01 | Phase 3 | Pending |
+| WRITER-02 | Phase 3 | Pending |
+| WRITER-03 | Phase 3 | Pending |
+| WRITER-04 | Phase 3 | Pending |
+| WRITER-05 | Phase 3 | Pending |
+| WRITER-06 | Phase 3 | Pending |
+| EXTRACT-01 | Phase 4 | Pending |
+| EXTRACT-02 | Phase 4 | Pending |
+| EXTRACT-03 | Phase 4 | Pending |
+| EXTRACT-04 | Phase 4 | Pending |
+| EXTRACT-05 | Phase 4 | Pending |
+| EXTRACT-06 | Phase 4 | Pending |
+| EXTRACT-07 | Phase 4 | Pending |
+| CLI-01 | Phase 5 | Pending |
+| CLI-02 | Phase 5 | Pending |
+| CLI-03 | Phase 5 | Pending |
+| CLI-04 | Phase 5 | Pending |
+| CLI-05 | Phase 5 | Pending |
+| WRITER-07 | Phase 6 | Pending |
+| WRITER-08 | Phase 6 | Pending |
+| WRITER-09 | Phase 6 | Pending |
+| WRITER-10 | Phase 6 | Pending |
+
+**Coverage:**
+- v1 requirements: 33 total
+- Mapped to phases: 33
+- Unmapped: 0 ✓
+
+---
+*Requirements defined: 2026-01-19*
+*Last updated: 2026-01-19 after initial definition*
