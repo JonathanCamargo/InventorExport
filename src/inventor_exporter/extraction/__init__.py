@@ -7,15 +7,11 @@ via the COM API. The extracted data populates the intermediate representation
 Functions:
     traverse_assembly: Walk assembly hierarchy, return all leaf occurrences
     extract_transform: Convert Inventor Matrix to Transform dataclass
-    export_step: Export document to STEP format via TranslatorAddIn
-    export_unique_parts: Export STEP for unique parts (deduplicated)
+    extract_material: Extract material name and density from part
+    extract_mass_properties: Extract mass, CoM, and inertia tensor from part
 
 Classes:
     OccurrenceData: Data holder for a single leaf occurrence
-
-Constants:
-    STEP_TRANSLATOR_GUID: GUID for STEP TranslatorAddIn
-    AP203, AP214, AP242: Application Protocol types for STEP export
 """
 
 from inventor_exporter.extraction.assembly import (
@@ -23,23 +19,13 @@ from inventor_exporter.extraction.assembly import (
     extract_transform,
     traverse_assembly,
 )
-from inventor_exporter.extraction.geometry import (
-    AP203,
-    AP214,
-    AP242,
-    STEP_TRANSLATOR_GUID,
-    export_step,
-    export_unique_parts,
-)
+from inventor_exporter.extraction.material import extract_material
+from inventor_exporter.extraction.mass import extract_mass_properties
 
 __all__ = [
     "traverse_assembly",
     "extract_transform",
     "OccurrenceData",
-    "STEP_TRANSLATOR_GUID",
-    "AP203",
-    "AP214",
-    "AP242",
-    "export_step",
-    "export_unique_parts",
+    "extract_material",
+    "extract_mass_properties",
 ]
