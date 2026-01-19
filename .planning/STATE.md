@@ -4,25 +4,25 @@
 
 **Core Value:** Adding a new export format should only require implementing a format-specific writer
 
-**Current Focus:** Phase 3 Complete - Ready for Phase 4 (Inventor Extraction)
+**Current Focus:** Phase 4 In Progress - Inventor Extraction (Plan 1 of 5 complete)
 
 ## Current Position
 
-**Phase:** 3 of 6 (ADAMS Writer) - COMPLETE
-**Plan:** 2 of 2 complete
-**Status:** Phase 3 complete
-**Last activity:** 2026-01-19 - Completed Phase 3 execution
+**Phase:** 4 of 6 (Inventor Extraction)
+**Plan:** 1 of 5 complete
+**Status:** In progress
+**Last activity:** 2026-01-19 - Completed 04-01-PLAN.md (assembly traversal)
 
-**Progress:** [#######...] 7/12 plans complete (Phases 1-3)
+**Progress:** [########..] 8/12 plans complete (Phases 1-3, 04-01)
 
 ## Performance Metrics
 
 | Metric | Value |
 |--------|-------|
 | Phases Completed | 3/6 |
-| Plans Completed | 7 (01-01, 01-02, 01-03, 02-01, 02-02, 03-01, 03-02) |
+| Plans Completed | 8 (01-01, 01-02, 01-03, 02-01, 02-02, 03-01, 03-02, 04-01) |
 | Requirements Done | 18/34 (INFRA-01-06, MODEL-01-06, WRITER-01-06) |
-| Tests | 15 passing |
+| Tests | 25 passing |
 
 ## Accumulated Context
 
@@ -51,6 +51,9 @@
 | Protocol over ABC | Structural subtyping, no inheritance needed | 03-01 |
 | Class-level WriterRegistry | Simple, import-time registration | 03-01 |
 | f-strings over templates | ADAMS output is simple; Jinja2 overkill | 03-02 |
+| AllLeafOccurrences over manual recursion | Simpler, handles transform accumulation automatically | 04-01 |
+| OccurrenceData holds COM reference | Allows later extraction of mass/material from same doc | 04-01 |
+| definition_path for deduplication | Multiple occurrences may reference same part definition | 04-01 |
 
 ### Technical Notes
 
@@ -59,7 +62,7 @@
 - click for CLI framework
 - dataclasses for intermediate representation
 - scipy.spatial.transform for rotation math
-- pytest for testing (15 tests passing)
+- pytest for testing (25 tests passing)
 
 ### Research Flags
 
@@ -68,7 +71,7 @@
 | Phase 1 | LOW | Standard patterns - COMPLETE |
 | Phase 2 | LOW | Mathematical transforms - COMPLETE |
 | Phase 3 | LOW | VBA provides reference - COMPLETE |
-| Phase 4 | MEDIUM | Verify Inventor COM API details |
+| Phase 4 | MEDIUM | Verify Inventor COM API details - IN PROGRESS |
 | Phase 5 | LOW | Standard click patterns |
 | Phase 6 | MEDIUM | Verify current format specs |
 
@@ -96,25 +99,26 @@ None currently.
 ### Last Session
 
 **Date:** 2026-01-19
-**Work Done:** Completed Phase 3 (ADAMS Writer)
-- 03-01: FormatWriter Protocol + WriterRegistry
-- 03-02: AdamsWriter implementation + 15 unit tests
-**Stopping Point:** Phase 3 complete; ready for Phase 4
+**Work Done:** Completed 04-01-PLAN.md (assembly traversal)
+- traverse_assembly() using AllLeafOccurrences
+- extract_transform() with cm to m conversion
+- 10 unit tests with mocked COM objects
+**Stopping Point:** Plan 04-01 complete; ready for 04-02 (STEP export)
 
 ### Commits This Session
 
 | Hash | Description |
 |------|-------------|
-| 84d4f0f | feat(03-01): create writer infrastructure with FormatWriter Protocol and WriterRegistry |
-| e13ca46 | feat(03-02): implement AdamsWriter with unit tests |
+| 523acfd | feat(04-01): create extraction package with assembly traversal |
+| 68f986a | test(04-01): add unit tests for assembly traversal and transform extraction |
 
 ### Next Session
 
-**Resume At:** Phase 4 (Inventor Extraction)
+**Resume At:** Plan 04-02 (STEP geometry export)
 **Context Needed:** None additional
-**First Action:** `/gsd:plan-phase 4` to create extraction plans
+**First Action:** `/gsd:execute-phase` for 04-02
 
 ---
 
 *State initialized: 2026-01-19*
-*Last updated: 2026-01-19 after Phase 3 completion*
+*Last updated: 2026-01-19 after 04-01 completion*
