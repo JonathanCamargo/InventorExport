@@ -4,25 +4,25 @@
 
 **Core Value:** Adding a new export format should only require implementing a format-specific writer
 
-**Current Focus:** Phase 4 In Progress - Inventor Extraction (Plan 3 of 5 complete)
+**Current Focus:** Phase 4 Complete - Inventor Extraction (All 4 plans done)
 
 ## Current Position
 
 **Phase:** 4 of 6 (Inventor Extraction)
-**Plan:** 3 of 5 complete
-**Status:** In progress
-**Last activity:** 2026-01-19 - Completed 04-02-PLAN.md (STEP geometry export)
+**Plan:** 4 of 4 complete
+**Status:** Phase complete
+**Last activity:** 2026-01-19 - Completed 04-04-PLAN.md (InventorClient orchestrator)
 
-**Progress:** [#########.] 10/12 plans complete (Phases 1-3, 04-01 to 04-03)
+**Progress:** [##########] 11/12 plans complete (Phases 1-4 complete)
 
 ## Performance Metrics
 
 | Metric | Value |
 |--------|-------|
-| Phases Completed | 3/6 |
-| Plans Completed | 10 (01-01, 01-02, 01-03, 02-01, 02-02, 03-01, 03-02, 04-01, 04-02, 04-03) |
-| Requirements Done | 18/34 (INFRA-01-06, MODEL-01-06, WRITER-01-06) |
-| Tests | 56 passing |
+| Phases Completed | 4/6 |
+| Plans Completed | 11 (01-01, 01-02, 01-03, 02-01, 02-02, 03-01, 03-02, 04-01, 04-02, 04-03, 04-04) |
+| Requirements Done | 22/34 (INFRA-01-06, MODEL-01-06, WRITER-01-06, EXTRACT-01-04) |
+| Tests | 64 passing |
 
 ## Accumulated Context
 
@@ -59,6 +59,8 @@
 | Partial name matching for density | Handles locale variations (Density/Dichte) | 04-03 |
 | Default density fallback | 7800 kg/m^3 (steel) when properties missing | 04-03 |
 | Tuple unpacking for XYZMomentsOfInertia | pywin32 returns tuple, not ByRef like VBA | 04-03 |
+| Material deduplication by name | Same material may appear on multiple parts | 04-04 |
+| Partial extraction on failure | Log and continue - partial model better than no model | 04-04 |
 
 ### Technical Notes
 
@@ -67,7 +69,7 @@
 - click for CLI framework
 - dataclasses for intermediate representation
 - scipy.spatial.transform for rotation math
-- pytest for testing (56 tests passing)
+- pytest for testing (64 tests passing)
 
 ### Unit Conversion Constants
 
@@ -85,7 +87,7 @@
 | Phase 1 | LOW | Standard patterns - COMPLETE |
 | Phase 2 | LOW | Mathematical transforms - COMPLETE |
 | Phase 3 | LOW | VBA provides reference - COMPLETE |
-| Phase 4 | MEDIUM | Verify Inventor COM API details - IN PROGRESS |
+| Phase 4 | MEDIUM | Inventor COM API - COMPLETE |
 | Phase 5 | LOW | Standard click patterns |
 | Phase 6 | MEDIUM | Verify current format specs |
 
@@ -113,27 +115,28 @@ None currently.
 ### Last Session
 
 **Date:** 2026-01-19
-**Work Done:** Completed 04-02-PLAN.md (STEP geometry export)
-- export_step() via TranslatorAddIn with CastTo
-- export_unique_parts() with deduplication by definition_path
-- AP214 protocol default for better compatibility
-- 21 unit tests for geometry export with mocked COM
-**Stopping Point:** Plan 04-02 complete; 04-01, 04-02, 04-03 all done
+**Work Done:** Completed 04-04-PLAN.md (InventorClient orchestrator)
+- InventorClient class as single entry point for extraction
+- extract_assembly() orchestrates all extraction modules
+- Material deduplication, partial extraction on failures
+- 8 integration tests with mocked COM
+**Stopping Point:** Plan 04-04 complete; Phase 4 complete
 
 ### Commits This Session
 
 | Hash | Description |
 |------|-------------|
-| 6e68281 | feat(04-02): implement STEP export via TranslatorAddIn |
-| 52823e1 | test(04-02): add unit tests for STEP geometry export |
+| c90cf5b | feat(04-04): implement InventorClient extraction orchestrator |
+| 70ba645 | chore(04-04): update extraction package exports with InventorClient |
+| 817829a | test(04-04): add integration tests for InventorClient |
 
 ### Next Session
 
-**Resume At:** Plan 04-04 (full extraction pipeline)
+**Resume At:** Phase 5 (CLI Integration)
 **Context Needed:** None additional
-**First Action:** `/gsd:execute-phase` for 04-04
+**First Action:** `/gsd:execute-phase` for Phase 5
 
 ---
 
 *State initialized: 2026-01-19*
-*Last updated: 2026-01-19 after 04-02 completion*
+*Last updated: 2026-01-19 after 04-04 completion*
