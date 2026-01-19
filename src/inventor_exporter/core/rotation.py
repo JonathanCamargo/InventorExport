@@ -93,3 +93,59 @@ def rotation_to_quaternion(
     r = Rotation.from_matrix(rotation_matrix)
     q = r.as_quat(canonical=canonical, scalar_first=scalar_first)
     return tuple(q)
+
+
+def rotation_to_format(
+    rotation_matrix: np.ndarray,
+    target_format: str,
+) -> Tuple[float, ...]:
+    """
+    Convert rotation matrix to target export format convention.
+
+    Args:
+        rotation_matrix: 3x3 rotation matrix
+        target_format: One of "ADAMS", "URDF", "MUJOCO"
+
+    Returns:
+        Tuple of rotation values in format-appropriate convention:
+        - ADAMS: (psi, theta, phi) ZXZ Euler angles in degrees
+        - URDF: (roll, pitch, yaw) RPY angles in radians
+        - MUJOCO: (w, x, y, z) quaternion
+
+    Raises:
+        ValueError: If target_format is not recognized
+    """
+    fmt = target_format.upper()
+    if fmt == "ADAMS":
+        return rotation_to_euler(rotation_matrix, EulerConvention.ADAMS_ZXZ, degrees=True)
+    elif fmt == "URDF":
+        return rotation_to_euler(rotation_matrix, EulerConvention.URDF_RPY, degrees=False)
+    elif fmt == "MUJOCO":
+        return rotation_to_quaternion(rotation_matrix, scalar_first=True)
+    else:
+        raise ValueError(f"Unknown target format: {target_format}")
+
+
+def extract_rotation_matrix(inventor_matrix) -> np.ndarray:
+    """
+    Extract 3x3 rotation matrix from Inventor 4x4 transformation matrix.
+
+    Args:
+        inventor_matrix: Inventor.Matrix COM object (4x4 transformation).
+            Uses 1-based Cell(row, col) indexing.
+
+    Returns:
+        3x3 numpy array containing rotation portion
+
+    Note:
+        Inventor matrices are column-major. Cell(row, col) is 1-indexed.
+        The rotation is in the upper-left 3x3 portion.
+        This function will be used by the extraction module.
+    """
+    # Inventor Matrix.Cell() uses 1-based indexing
+    rotation = np.array([
+        [inventor_matrix.Cell(1, 1), inventor_matrix.Cell(1, 2), inventor_matrix.Cell(1, 3)],
+        [inventor_matrix.Cell(2, 1), inventor_matrix.Cell(2, 2), inventor_matrix.Cell(2, 3)],
+        [inventor_matrix.Cell(3, 1), inventor_matrix.Cell(3, 2), inventor_matrix.Cell(3, 3)],
+    ])
+    return rotation
