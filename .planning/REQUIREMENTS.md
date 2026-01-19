@@ -37,12 +37,12 @@ Requirements for initial release. Each maps to roadmap phases.
 
 ### Format Writing
 
-- [ ] **WRITER-01**: FormatWriter Protocol defines interface for all format writers
-- [ ] **WRITER-02**: WriterRegistry discovers and selects writers by format name
-- [ ] **WRITER-03**: ADAMS writer generates rigid body definitions (VBA parity)
-- [ ] **WRITER-04**: ADAMS writer generates material property section
-- [ ] **WRITER-05**: ADAMS writer generates geometry property section with STEP references
-- [ ] **WRITER-06**: ADAMS output matches VBA output for same input assembly
+- [x] **WRITER-01**: FormatWriter Protocol defines interface for all format writers
+- [x] **WRITER-02**: WriterRegistry discovers and selects writers by format name
+- [x] **WRITER-03**: ADAMS writer generates rigid body definitions (VBA parity)
+- [x] **WRITER-04**: ADAMS writer generates material property section
+- [x] **WRITER-05**: ADAMS writer generates geometry property section with STEP references
+- [x] **WRITER-06**: ADAMS output matches VBA output for same input assembly
 - [ ] **WRITER-07**: URDF writer generates valid URDF XML with bodies and geometry
 - [ ] **WRITER-08**: URDF writer handles coordinate conventions (meters, RPY angles)
 - [ ] **WRITER-09**: MuJoCo writer generates valid MJCF XML with bodies and geometry
@@ -105,12 +105,12 @@ Which phases cover which requirements. Updated during roadmap creation.
 | MODEL-04 | Phase 2 | Complete |
 | MODEL-05 | Phase 2 | Complete |
 | MODEL-06 | Phase 2 | Complete |
-| WRITER-01 | Phase 3 | Pending |
-| WRITER-02 | Phase 3 | Pending |
-| WRITER-03 | Phase 3 | Pending |
-| WRITER-04 | Phase 3 | Pending |
-| WRITER-05 | Phase 3 | Pending |
-| WRITER-06 | Phase 3 | Pending |
+| WRITER-01 | Phase 3 | Complete |
+| WRITER-02 | Phase 3 | Complete |
+| WRITER-03 | Phase 3 | Complete |
+| WRITER-04 | Phase 3 | Complete |
+| WRITER-05 | Phase 3 | Complete |
+| WRITER-06 | Phase 3 | Complete |
 | EXTRACT-01 | Phase 4 | Pending |
 | EXTRACT-02 | Phase 4 | Pending |
 | EXTRACT-03 | Phase 4 | Pending |
@@ -135,4 +135,4 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 ---
 *Requirements defined: 2026-01-19*
-*Last updated: 2026-01-19 after Phase 2 completion*
+*Last updated: 2026-01-19 after Phase 3 completion*
