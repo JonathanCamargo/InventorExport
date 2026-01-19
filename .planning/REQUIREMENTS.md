@@ -18,12 +18,12 @@ Requirements for initial release. Each maps to roadmap phases.
 
 ### Data Model
 
-- [ ] **MODEL-01**: AssemblyModel dataclass represents complete assembly structure
-- [ ] **MODEL-02**: Body dataclass captures part instance with name, transform, geometry reference, material
-- [ ] **MODEL-03**: Material dataclass captures density and physical properties
-- [ ] **MODEL-04**: Transform dataclass captures position (translation) and orientation (rotation matrix)
-- [ ] **MODEL-05**: Inertia tensor handled with proper reference frame transformations
-- [ ] **MODEL-06**: Model validation catches invalid/incomplete data before export
+- [x] **MODEL-01**: AssemblyModel dataclass represents complete assembly structure
+- [x] **MODEL-02**: Body dataclass captures part instance with name, transform, geometry reference, material
+- [x] **MODEL-03**: Material dataclass captures density and physical properties
+- [x] **MODEL-04**: Transform dataclass captures position (translation) and orientation (rotation matrix)
+- [x] **MODEL-05**: Inertia tensor handled with proper reference frame transformations
+- [x] **MODEL-06**: Model validation catches invalid/incomplete data before export
 
 ### Extraction
 
@@ -99,12 +99,12 @@ Which phases cover which requirements. Updated during roadmap creation.
 | INFRA-04 | Phase 1 | Complete |
 | INFRA-05 | Phase 1 | Complete |
 | INFRA-06 | Phase 1 | Complete |
-| MODEL-01 | Phase 2 | Pending |
-| MODEL-02 | Phase 2 | Pending |
-| MODEL-03 | Phase 2 | Pending |
-| MODEL-04 | Phase 2 | Pending |
-| MODEL-05 | Phase 2 | Pending |
-| MODEL-06 | Phase 2 | Pending |
+| MODEL-01 | Phase 2 | Complete |
+| MODEL-02 | Phase 2 | Complete |
+| MODEL-03 | Phase 2 | Complete |
+| MODEL-04 | Phase 2 | Complete |
+| MODEL-05 | Phase 2 | Complete |
+| MODEL-06 | Phase 2 | Complete |
 | WRITER-01 | Phase 3 | Pending |
 | WRITER-02 | Phase 3 | Pending |
 | WRITER-03 | Phase 3 | Pending |
@@ -135,4 +135,4 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 ---
 *Requirements defined: 2026-01-19*
-*Last updated: 2026-01-19 after Phase 1 completion*
+*Last updated: 2026-01-19 after Phase 2 completion*
