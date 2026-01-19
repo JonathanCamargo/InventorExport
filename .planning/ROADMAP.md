@@ -19,6 +19,13 @@ The phase structure follows the ETL pattern: build extraction utilities, define 
 
 **Dependencies:** None (foundational)
 
+**Plans:** 3 plans
+
+Plans:
+- [ ] 01-01-PLAN.md - Logging infrastructure and unit conversion utilities
+- [ ] 01-02-PLAN.md - Rotation conversion utilities (scipy-based)
+- [ ] 01-03-PLAN.md - COM connection and lifecycle management
+
 **Requirements:**
 - INFRA-01: Python connects to Inventor via COM with proper lifecycle management
 - INFRA-02: COM objects are cleaned up deterministically (context managers, no memory leaks)
@@ -150,7 +157,7 @@ The phase structure follows the ETL pattern: build extraction utilities, define 
 
 | Phase | Name | Requirements | Status |
 |-------|------|--------------|--------|
-| 1 | Core Infrastructure | 6 | Not Started |
+| 1 | Core Infrastructure | 6 | Planned (3 plans) |
 | 2 | Data Model | 6 | Not Started |
 | 3 | ADAMS Writer | 6 | Not Started |
 | 4 | Inventor Extraction | 7 | Not Started |
