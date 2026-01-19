@@ -52,8 +52,8 @@ Plans:
 **Plans:** 2 plans
 
 Plans:
-- [ ] 02-01-PLAN.md - Foundation dataclasses (Transform, Material, Inertia with tensor math)
-- [ ] 02-02-PLAN.md - Body and AssemblyModel with validation
+- [x] 02-01-PLAN.md - Foundation dataclasses (Transform, Material, Inertia with tensor math)
+- [x] 02-02-PLAN.md - Body and AssemblyModel with validation
 
 **Requirements:**
 - MODEL-01: AssemblyModel dataclass represents complete assembly structure
@@ -76,6 +76,12 @@ Plans:
 **Goal:** First format writer validates IR design and achieves VBA output parity.
 
 **Dependencies:** Phase 2 (data model)
+
+**Plans:** 2 plans
+
+Plans:
+- [ ] 03-01-PLAN.md - Writer infrastructure (FormatWriter Protocol + WriterRegistry)
+- [ ] 03-02-PLAN.md - ADAMS writer implementation with unit tests
 
 **Requirements:**
 - WRITER-01: FormatWriter Protocol defines interface for all format writers
@@ -164,8 +170,8 @@ Plans:
 | Phase | Name | Requirements | Status |
 |-------|------|--------------|--------|
 | 1 | Core Infrastructure | 6 | Complete |
-| 2 | Data Model | 6 | Complete ✓ |
-| 3 | ADAMS Writer | 6 | Not Started |
+| 2 | Data Model | 6 | Complete |
+| 3 | ADAMS Writer | 6 | Planned |
 | 4 | Inventor Extraction | 7 | Not Started |
 | 5 | CLI Integration | 5 | Not Started |
 | 6 | Additional Writers | 4 | Not Started |
@@ -195,4 +201,4 @@ Phase 4: Extraction --> Phase 5: CLI
 ---
 
 *Roadmap created: 2026-01-19*
-*Last updated: 2026-01-19 after Phase 2 completion*
+*Last updated: 2026-01-19 after Phase 3 planning*
