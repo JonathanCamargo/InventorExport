@@ -9,12 +9,12 @@ Requirements for initial release. Each maps to roadmap phases.
 
 ### Infrastructure
 
-- [ ] **INFRA-01**: Python connects to Inventor via COM with proper lifecycle management
-- [ ] **INFRA-02**: COM objects are cleaned up deterministically (context managers, no memory leaks)
-- [ ] **INFRA-03**: Unit conversion utilities convert between Inventor internal units and export format units
-- [ ] **INFRA-04**: Transform utilities convert rotation matrices to Euler angles and quaternions
-- [ ] **INFRA-05**: Transform utilities handle format-specific rotation conventions (XYZ, RPY, quaternion)
-- [ ] **INFRA-06**: Logging infrastructure provides debug output and error tracking
+- [x] **INFRA-01**: Python connects to Inventor via COM with proper lifecycle management
+- [x] **INFRA-02**: COM objects are cleaned up deterministically (context managers, no memory leaks)
+- [x] **INFRA-03**: Unit conversion utilities convert between Inventor internal units and export format units
+- [x] **INFRA-04**: Transform utilities convert rotation matrices to Euler angles and quaternions
+- [x] **INFRA-05**: Transform utilities handle format-specific rotation conventions (XYZ, RPY, quaternion)
+- [x] **INFRA-06**: Logging infrastructure provides debug output and error tracking
 
 ### Data Model
 
@@ -93,12 +93,12 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| INFRA-01 | Phase 1 | Pending |
-| INFRA-02 | Phase 1 | Pending |
-| INFRA-03 | Phase 1 | Pending |
-| INFRA-04 | Phase 1 | Pending |
-| INFRA-05 | Phase 1 | Pending |
-| INFRA-06 | Phase 1 | Pending |
+| INFRA-01 | Phase 1 | Complete |
+| INFRA-02 | Phase 1 | Complete |
+| INFRA-03 | Phase 1 | Complete |
+| INFRA-04 | Phase 1 | Complete |
+| INFRA-05 | Phase 1 | Complete |
+| INFRA-06 | Phase 1 | Complete |
 | MODEL-01 | Phase 2 | Pending |
 | MODEL-02 | Phase 2 | Pending |
 | MODEL-03 | Phase 2 | Pending |
@@ -135,4 +135,4 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 ---
 *Requirements defined: 2026-01-19*
-*Last updated: 2026-01-19 after roadmap creation*
+*Last updated: 2026-01-19 after Phase 1 completion*
