@@ -22,9 +22,9 @@ The phase structure follows the ETL pattern: build extraction utilities, define 
 **Plans:** 3 plans
 
 Plans:
-- [ ] 01-01-PLAN.md - Logging infrastructure and unit conversion utilities
-- [ ] 01-02-PLAN.md - Rotation conversion utilities (scipy-based)
-- [ ] 01-03-PLAN.md - COM connection and lifecycle management
+- [x] 01-01-PLAN.md - Logging infrastructure and unit conversion utilities
+- [x] 01-02-PLAN.md - Rotation conversion utilities (scipy-based)
+- [x] 01-03-PLAN.md - COM connection and lifecycle management
 
 **Requirements:**
 - INFRA-01: Python connects to Inventor via COM with proper lifecycle management
@@ -48,6 +48,12 @@ Plans:
 **Goal:** Format-agnostic intermediate representation captures complete assembly structure.
 
 **Dependencies:** Phase 1 (transform utilities)
+
+**Plans:** 2 plans
+
+Plans:
+- [ ] 02-01-PLAN.md - Foundation dataclasses (Transform, Material, Inertia with tensor math)
+- [ ] 02-02-PLAN.md - Body and AssemblyModel with validation
 
 **Requirements:**
 - MODEL-01: AssemblyModel dataclass represents complete assembly structure
@@ -157,8 +163,8 @@ Plans:
 
 | Phase | Name | Requirements | Status |
 |-------|------|--------------|--------|
-| 1 | Core Infrastructure | 6 | Complete ✓ |
-| 2 | Data Model | 6 | Not Started |
+| 1 | Core Infrastructure | 6 | Complete |
+| 2 | Data Model | 6 | Planned |
 | 3 | ADAMS Writer | 6 | Not Started |
 | 4 | Inventor Extraction | 7 | Not Started |
 | 5 | CLI Integration | 5 | Not Started |
@@ -189,4 +195,4 @@ Phase 4: Extraction --> Phase 5: CLI
 ---
 
 *Roadmap created: 2026-01-19*
-*Last updated: 2026-01-19 after Phase 1 completion*
+*Last updated: 2026-01-19 after Phase 2 planning*
