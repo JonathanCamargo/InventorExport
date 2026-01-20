@@ -140,8 +140,8 @@ Plans:
 **Plans:** 2 plans
 
 Plans:
-- [ ] 05-01-PLAN.md - CLI module with Click framework and entry point
-- [ ] 05-02-PLAN.md - CLI test suite with CliRunner
+- [x] 05-01-PLAN.md - CLI module with Click framework and entry point
+- [x] 05-02-PLAN.md - CLI test suite with CliRunner
 
 **Requirements:**
 - CLI-01: User can run exporter from command line
@@ -187,7 +187,7 @@ Plans:
 | 2 | Data Model | 6 | Complete |
 | 3 | ADAMS Writer | 6 | Complete |
 | 4 | Inventor Extraction | 7 | Complete |
-| 5 | CLI Integration | 5 | Planned |
+| 5 | CLI Integration | 5 | Complete |
 | 6 | Additional Writers | 4 | Not Started |
 
 **Total:** 34 requirements across 6 phases
@@ -215,4 +215,4 @@ Phase 4: Extraction --> Phase 5: CLI
 ---
 
 *Roadmap created: 2026-01-19*
-*Last updated: 2026-01-20 after Phase 5 planning*
+*Last updated: 2026-01-20 after Phase 5 completion*

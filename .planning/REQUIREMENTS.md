@@ -50,11 +50,11 @@ Requirements for initial release. Each maps to roadmap phases.
 
 ### CLI
 
-- [ ] **CLI-01**: User can run exporter from command line
-- [ ] **CLI-02**: User can select output format via --format flag (adams, urdf, mujoco)
-- [ ] **CLI-03**: User can specify output path via --output flag
-- [ ] **CLI-04**: User receives clear error messages for invalid input
-- [ ] **CLI-05**: User can list available formats via --list-formats
+- [x] **CLI-01**: User can run exporter from command line
+- [x] **CLI-02**: User can select output format via --format flag (adams, urdf, mujoco)
+- [x] **CLI-03**: User can specify output path via --output flag
+- [x] **CLI-04**: User receives clear error messages for invalid input
+- [x] **CLI-05**: User can list available formats via --list-formats
 
 ## v2 Requirements
 
@@ -118,11 +118,11 @@ Which phases cover which requirements. Updated during roadmap creation.
 | EXTRACT-05 | Phase 4 | Complete |
 | EXTRACT-06 | Phase 4 | Complete |
 | EXTRACT-07 | Phase 4 | Complete |
-| CLI-01 | Phase 5 | Pending |
-| CLI-02 | Phase 5 | Pending |
-| CLI-03 | Phase 5 | Pending |
-| CLI-04 | Phase 5 | Pending |
-| CLI-05 | Phase 5 | Pending |
+| CLI-01 | Phase 5 | Complete |
+| CLI-02 | Phase 5 | Complete |
+| CLI-03 | Phase 5 | Complete |
+| CLI-04 | Phase 5 | Complete |
+| CLI-05 | Phase 5 | Complete |
 | WRITER-07 | Phase 6 | Pending |
 | WRITER-08 | Phase 6 | Pending |
 | WRITER-09 | Phase 6 | Pending |
@@ -135,4 +135,4 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 ---
 *Requirements defined: 2026-01-19*
-*Last updated: 2026-01-19 after Phase 4 completion*
+*Last updated: 2026-01-20 after Phase 5 completion*
