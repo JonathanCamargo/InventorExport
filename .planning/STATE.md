@@ -72,6 +72,7 @@
 | Forward slashes in URDF mesh paths | Cross-platform URDF compatibility | 06-02 |
 | diaginertia vs fullinertia selection | Use diaginertia when off-diagonal terms zero | 06-04 |
 | Mesh asset naming {name}_mesh | Consistent naming for MJCF readability | 06-04 |
+| SDF pose element format | 6 space-separated values for compact pose | 06-03 |
 
 ### Technical Notes
 
