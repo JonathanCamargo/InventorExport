@@ -21,7 +21,7 @@
 |--------|-------|
 | Phases Completed | 4/6 |
 | Plans Completed | 11 (01-01, 01-02, 01-03, 02-01, 02-02, 03-01, 03-02, 04-01, 04-02, 04-03, 04-04) |
-| Requirements Done | 22/34 (INFRA-01-06, MODEL-01-06, WRITER-01-06, EXTRACT-01-04) |
+| Requirements Done | 25/34 (INFRA-01-06, MODEL-01-06, WRITER-01-06, EXTRACT-01-07) |
 | Tests | 64 passing |
 
 ## Accumulated Context
@@ -134,7 +134,7 @@ None currently.
 
 **Resume At:** Phase 5 (CLI Integration)
 **Context Needed:** None additional
-**First Action:** `/gsd:execute-phase` for Phase 5
+**First Action:** `/gsd:plan-phase 5` to create CLI plans
 
 ---
 

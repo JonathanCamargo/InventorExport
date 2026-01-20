@@ -108,10 +108,10 @@ Plans:
 **Plans:** 4 plans
 
 Plans:
-- [ ] 04-01-PLAN.md - Assembly traversal and transform extraction
-- [ ] 04-02-PLAN.md - STEP geometry export via TranslatorAddIn
-- [ ] 04-03-PLAN.md - Material and mass property extraction
-- [ ] 04-04-PLAN.md - InventorClient orchestrator
+- [x] 04-01-PLAN.md - Assembly traversal and transform extraction
+- [x] 04-02-PLAN.md - STEP geometry export via TranslatorAddIn
+- [x] 04-03-PLAN.md - Material and mass property extraction
+- [x] 04-04-PLAN.md - InventorClient orchestrator
 
 **Requirements:**
 - EXTRACT-01: InventorClient connects to running Inventor instance
@@ -180,7 +180,7 @@ Plans:
 | 1 | Core Infrastructure | 6 | Complete |
 | 2 | Data Model | 6 | Complete |
 | 3 | ADAMS Writer | 6 | Complete |
-| 4 | Inventor Extraction | 7 | Planned |
+| 4 | Inventor Extraction | 7 | Complete |
 | 5 | CLI Integration | 5 | Not Started |
 | 6 | Additional Writers | 4 | Not Started |
 
@@ -209,4 +209,4 @@ Phase 4: Extraction --> Phase 5: CLI
 ---
 
 *Roadmap created: 2026-01-19*
-*Last updated: 2026-01-19 after Phase 4 planning*
+*Last updated: 2026-01-19 after Phase 4 completion*

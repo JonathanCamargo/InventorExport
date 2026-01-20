@@ -27,13 +27,13 @@ Requirements for initial release. Each maps to roadmap phases.
 
 ### Extraction
 
-- [ ] **EXTRACT-01**: InventorClient connects to running Inventor instance
-- [ ] **EXTRACT-02**: Assembly traversal walks hierarchy and collects leaf occurrences
-- [ ] **EXTRACT-03**: Transformation extraction gets position and orientation from occurrence matrix
-- [ ] **EXTRACT-04**: Transform accumulation handles nested subassemblies correctly
-- [ ] **EXTRACT-05**: STEP export generates geometry files for each unique part
-- [ ] **EXTRACT-06**: Material extraction reads actual material properties from parts
-- [ ] **EXTRACT-07**: Mass property extraction gets mass and inertia tensor from Inventor
+- [x] **EXTRACT-01**: InventorClient connects to running Inventor instance
+- [x] **EXTRACT-02**: Assembly traversal walks hierarchy and collects leaf occurrences
+- [x] **EXTRACT-03**: Transformation extraction gets position and orientation from occurrence matrix
+- [x] **EXTRACT-04**: Transform accumulation handles nested subassemblies correctly
+- [x] **EXTRACT-05**: STEP export generates geometry files for each unique part
+- [x] **EXTRACT-06**: Material extraction reads actual material properties from parts
+- [x] **EXTRACT-07**: Mass property extraction gets mass and inertia tensor from Inventor
 
 ### Format Writing
 
@@ -111,13 +111,13 @@ Which phases cover which requirements. Updated during roadmap creation.
 | WRITER-04 | Phase 3 | Complete |
 | WRITER-05 | Phase 3 | Complete |
 | WRITER-06 | Phase 3 | Complete |
-| EXTRACT-01 | Phase 4 | Pending |
-| EXTRACT-02 | Phase 4 | Pending |
-| EXTRACT-03 | Phase 4 | Pending |
-| EXTRACT-04 | Phase 4 | Pending |
-| EXTRACT-05 | Phase 4 | Pending |
-| EXTRACT-06 | Phase 4 | Pending |
-| EXTRACT-07 | Phase 4 | Pending |
+| EXTRACT-01 | Phase 4 | Complete |
+| EXTRACT-02 | Phase 4 | Complete |
+| EXTRACT-03 | Phase 4 | Complete |
+| EXTRACT-04 | Phase 4 | Complete |
+| EXTRACT-05 | Phase 4 | Complete |
+| EXTRACT-06 | Phase 4 | Complete |
+| EXTRACT-07 | Phase 4 | Complete |
 | CLI-01 | Phase 5 | Pending |
 | CLI-02 | Phase 5 | Pending |
 | CLI-03 | Phase 5 | Pending |
@@ -135,4 +135,4 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 ---
 *Requirements defined: 2026-01-19*
-*Last updated: 2026-01-19 after Phase 3 completion*
+*Last updated: 2026-01-19 after Phase 4 completion*
