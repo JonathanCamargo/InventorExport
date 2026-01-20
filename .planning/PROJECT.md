@@ -8,40 +8,34 @@ A Python tool that exports Autodesk Inventor assemblies to multibody dynamics si
 
 Adding a new export format should only require implementing a format-specific writer — no changes to assembly traversal or data extraction logic.
 
-## Requirements
+## Current State
 
-### Validated
+**Shipped:** v1.0 (2026-01-20)
 
-- ✓ Export Inventor assemblies to ADAMS View command files — existing VBA
-- ✓ Export part geometries to STEP format — existing VBA
-- ✓ Extract material properties from parts — existing VBA
-- ✓ Calculate transformation matrices and Euler angles — existing VBA
-- ✓ Generate rigid body definitions with mass properties — existing VBA
+**Capabilities:**
+- `inventorexport` CLI tool connects to running Inventor instance
+- Exports assemblies to 4 formats: ADAMS, URDF, SDF, MuJoCo
+- Extracts materials, mass properties, and inertia tensors
+- Generates STEP geometry files and STL meshes
 
-### Active
+**Stats:**
+- 3,457 lines Python source
+- 3,085 lines test code
+- 146 tests passing
+- 4 output formats
 
-- [ ] Python CLI that connects to Inventor via COM automation
-- [ ] Abstract data model representing assembly structure (parts, transforms, materials)
-- [ ] Format writer interface that output plugins implement
-- [ ] ADAMS View format writer (parity with VBA implementation)
-- [ ] STEP geometry export integrated with format writers
+**Usage:**
+```bash
+inventorexport --format urdf --output model.urdf
+inventorexport --list-formats
+```
 
-### Out of Scope
+## Next Milestone Goals
 
-- MuJoCo XML format — deferred to v2, architecture will support it
-- URDF format — deferred to v2, architecture will support it
-- GUI — CLI is sufficient for automation workflows
-- Joint/constraint detection — current VBA doesn't support this, future enhancement
-
-## Context
-
-**Current state:** Working VBA macro (`Inventor2AdamsView.ivb`) that exports to ADAMS View format. Code is procedural with ADAMS-specific logic hardcoded throughout, making it difficult to add new formats.
-
-**Migration rationale:** Python offers better tooling, easier testing, cleaner abstractions for plugin architecture, and a larger ecosystem for future enhancements (e.g., XML/URDF libraries).
-
-**Inventor integration:** Python can automate Inventor via `win32com.client` (pywin32). Same COM API the VBA code uses, just accessed from Python.
-
-**Existing codebase analysis:** See `.planning/codebase/` for detailed architecture, conventions, and concerns from the VBA implementation.
+Potential v1.1 features (not yet defined):
+- Joint extraction from Inventor constraints
+- Batch export of multiple assemblies
+- Simplified collision geometry generation
 
 ## Constraints
 
@@ -53,9 +47,32 @@ Adding a new export format should only require implementing a format-specific wr
 
 | Decision | Rationale | Outcome |
 |----------|-----------|---------|
-| Python over VBA | Better abstractions, testing, maintainability | — Pending |
-| Plugin architecture for formats | Core goal — easy format addition | — Pending |
-| CLI interface | Sufficient for automation, simpler than GUI | — Pending |
+| Python over VBA | Better abstractions, testing, maintainability | Shipped v1.0 |
+| Plugin architecture for formats | Core goal — easy format addition | 4 formats in v1.0 |
+| CLI interface | Sufficient for automation, simpler than GUI | Click-based CLI |
+| ETL pattern | Clean separation of extraction, model, writers | AssemblyModel IR |
+| CadQuery for mesh conversion | pip installable, cleaner API than PythonOCC | Binary STL export |
 
 ---
-*Last updated: 2026-01-19 after initialization*
+
+<details>
+<summary>Initial Requirements (Pre-v1.0)</summary>
+
+### Validated (from VBA)
+
+- Export Inventor assemblies to ADAMS View command files
+- Export part geometries to STEP format
+- Extract material properties from parts
+- Calculate transformation matrices and Euler angles
+- Generate rigid body definitions with mass properties
+
+### Out of Scope (v1)
+
+- GUI — CLI is sufficient for automation workflows
+- Joint/constraint detection — deferred to v2
+
+</details>
+
+---
+*Project initialized: 2026-01-19*
+*v1.0 shipped: 2026-01-20*
