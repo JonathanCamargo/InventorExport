@@ -43,10 +43,10 @@ Requirements for initial release. Each maps to roadmap phases.
 - [x] **WRITER-04**: ADAMS writer generates material property section
 - [x] **WRITER-05**: ADAMS writer generates geometry property section with STEP references
 - [x] **WRITER-06**: ADAMS output matches VBA output for same input assembly
-- [ ] **WRITER-07**: URDF writer generates valid URDF XML with bodies and geometry
-- [ ] **WRITER-08**: URDF writer handles coordinate conventions (meters, RPY angles)
-- [ ] **WRITER-09**: MuJoCo writer generates valid MJCF XML with bodies and geometry
-- [ ] **WRITER-10**: MuJoCo writer handles coordinate conventions (meters, quaternions)
+- [x] **WRITER-07**: URDF writer generates valid URDF XML with bodies and geometry
+- [x] **WRITER-08**: URDF writer handles coordinate conventions (meters, RPY angles)
+- [x] **WRITER-09**: MuJoCo writer generates valid MJCF XML with bodies and geometry
+- [x] **WRITER-10**: MuJoCo writer handles coordinate conventions (meters, quaternions)
 
 ### CLI
 
@@ -123,10 +123,10 @@ Which phases cover which requirements. Updated during roadmap creation.
 | CLI-03 | Phase 5 | Complete |
 | CLI-04 | Phase 5 | Complete |
 | CLI-05 | Phase 5 | Complete |
-| WRITER-07 | Phase 6 | Pending |
-| WRITER-08 | Phase 6 | Pending |
-| WRITER-09 | Phase 6 | Pending |
-| WRITER-10 | Phase 6 | Pending |
+| WRITER-07 | Phase 6 | Complete |
+| WRITER-08 | Phase 6 | Complete |
+| WRITER-09 | Phase 6 | Complete |
+| WRITER-10 | Phase 6 | Complete |
 
 **Coverage:**
 - v1 requirements: 34 total
@@ -135,4 +135,4 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 ---
 *Requirements defined: 2026-01-19*
-*Last updated: 2026-01-20 after Phase 5 completion*
+*Last updated: 2026-01-20 after Phase 6 completion*
