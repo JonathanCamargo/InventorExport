@@ -85,8 +85,21 @@ def main(format: str, output: str, verbose: bool):
 
         # Show extraction summary
         click.echo(f"  Found {len(model.bodies)} bodies, {len(model.materials)} materials")
-        geometry_count = sum(1 for b in model.bodies if b.geometry_file is not None)
-        click.echo(f"  Exported {geometry_count} STEP files")
+
+        # Show geometry files
+        geometry_files = [b.geometry_file for b in model.bodies if b.geometry_file is not None]
+        missing_geometry = [b.name for b in model.bodies if b.geometry_file is None]
+
+        if geometry_files:
+            click.echo(f"  Exported {len(set(geometry_files))} STEP files to {output_path.parent.absolute()}")
+            if verbose:
+                for gf in sorted(set(geometry_files)):
+                    click.echo(f"    - {gf.name}")
+        else:
+            click.echo("  No STEP files exported (geometry export failed)")
+
+        if verbose and missing_geometry:
+            click.echo(f"  Bodies without geometry: {', '.join(missing_geometry)}")
 
         # Get writer and export
         click.echo(f"Writing {format} format...")
