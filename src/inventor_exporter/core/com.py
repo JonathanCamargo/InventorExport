@@ -72,11 +72,12 @@ def inventor_app() -> Generator[Any, None, None]:
     app = None
     try:
         logger.debug("Connecting to Inventor...")
+        # Get the running Inventor instance
+        # GetActiveObject returns IUnknown, need to QueryInterface for IDispatch
+        unknown = pythoncom.GetActiveObject("Inventor.Application")
+        dispatch = unknown.QueryInterface(pythoncom.IID_IDispatch)
         # Use dynamic dispatch to avoid gen_py cache issues
-        # (gen_py cache can get corrupted or mismatched with Inventor version)
-        app = win32com.client.dynamic.Dispatch(
-            pythoncom.GetActiveObject("Inventor.Application")
-        )
+        app = win32com.client.dynamic.Dispatch(dispatch)
         try:
             version = app.SoftwareVersion.DisplayVersion
             logger.debug(f"Connected to Inventor {version}")
