@@ -79,12 +79,18 @@ def export_step(
         interface. Without casting to "TranslatorAddIn", methods like
         SaveCopyAs will not be available.
     """
+    abs_path = str(output_path.absolute())
+    print(f"  [DEBUG] Exporting STEP to: {abs_path}")
+
     try:
         # Get the STEP translator add-in by GUID (use late binding)
+        print(f"  [DEBUG] Getting translator add-in...")
         translator = late_bind(app.ApplicationAddIns.ItemById(STEP_TRANSLATOR_GUID))
+        print(f"  [DEBUG] Translator: {translator}")
 
         # Ensure document is late-bound (may come from early-bound traversal)
         document = late_bind(document)
+        print(f"  [DEBUG] Document: {document}")
 
         # Create translation context
         context = late_bind(app.TransientObjects.CreateTranslationContext())
@@ -97,19 +103,24 @@ def export_step(
         try:
             translator.HasSaveCopyAsOptions(document, context, options)
         except Exception as e:
-            logger.debug(f"HasSaveCopyAsOptions failed: {e}")
+            print(f"  [DEBUG] HasSaveCopyAsOptions failed: {e}")
 
         # Create data medium with output path (must be absolute for Inventor COM)
         data_medium = late_bind(app.TransientObjects.CreateDataMedium())
-        data_medium.FileName = str(output_path.absolute())
+        data_medium.FileName = abs_path
 
         # Perform export
+        print(f"  [DEBUG] Calling SaveCopyAs...")
         translator.SaveCopyAs(document, context, options, data_medium)
+        print(f"  [DEBUG] SaveCopyAs completed")
 
         logger.info(f"Exported STEP: {output_path}")
         return True
 
     except Exception as e:
+        print(f"  [DEBUG] STEP export FAILED: {e}")
+        import traceback
+        traceback.print_exc()
         logger.error(f"STEP export failed for {output_path}: {e}")
         return False
 
