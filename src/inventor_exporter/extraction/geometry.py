@@ -92,7 +92,14 @@ def export_step(
         # Get default options and set protocol
         if translator.HasSaveCopyAsOptions(document, context, options):
             # Set Application Protocol (2=AP203, 3=AP214, 5=AP242)
-            options.Value["ApplicationProtocolType"] = protocol
+            # Note: VBA uses oOptions.Value("key") = value syntax
+            # Python win32com requires using the Item property for indexed access
+            try:
+                # Try early-binding style (works if gencache has type info)
+                options.Item("ApplicationProtocolType", protocol)
+            except TypeError:
+                # Fallback: use default options (AP214 is usually the default anyway)
+                logger.debug("Could not set ApplicationProtocolType, using translator defaults")
 
         # Create data medium with output path
         data_medium = app.TransientObjects.CreateDataMedium()

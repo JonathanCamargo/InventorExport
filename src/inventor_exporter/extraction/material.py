@@ -11,6 +11,8 @@ Units:
 import logging
 from typing import Any, Optional
 
+import win32com.client
+
 from inventor_exporter.model import Material
 
 logger = logging.getLogger(__name__)
@@ -21,6 +23,48 @@ CM3_TO_M3 = 1_000_000
 
 # Default density (steel) in kg/m^3 for fallback
 DEFAULT_DENSITY = 7800.0
+
+
+def _get_asset_value(prop: Any) -> Optional[float]:
+    """Extract numeric value from an AssetValue COM object.
+
+    AssetValue is a base class - the actual value is on subclasses like
+    FloatAssetValue. We try multiple access patterns for compatibility
+    with different COM binding modes.
+
+    Args:
+        prop: AssetValue COM object
+
+    Returns:
+        Float value if accessible, None otherwise
+    """
+    # Method 1: Try casting to FloatAssetValue (most reliable for density)
+    try:
+        float_prop = win32com.client.CastTo(prop, "FloatAssetValue")
+        return float_prop.Value
+    except Exception:
+        pass
+
+    # Method 2: Try direct Value access (works with some bindings)
+    try:
+        return prop.Value
+    except AttributeError:
+        pass
+
+    # Method 3: Try get_Value method (early binding style)
+    try:
+        return prop.get_Value()
+    except AttributeError:
+        pass
+
+    # Method 4: Try accessing via late binding dispatch
+    try:
+        late_prop = win32com.client.Dispatch(prop)
+        return late_prop.Value
+    except Exception:
+        pass
+
+    return None
 
 
 def extract_material(part_doc: Any) -> Optional[Material]:
@@ -71,7 +115,11 @@ def extract_material(part_doc: Any) -> Optional[Material]:
 
         # Check for density-related property names
         if "density" in prop_name or "dichte" in prop_name:
-            density_kg_cm3 = prop.Value
+            density_kg_cm3 = _get_asset_value(prop)
+            if density_kg_cm3 is None:
+                logger.warning(f"Could not read density value from '{prop.Name}'")
+                continue
+
             density_kg_m3 = density_kg_cm3 * CM3_TO_M3
             logger.debug(
                 f"Found density property '{prop.Name}': "

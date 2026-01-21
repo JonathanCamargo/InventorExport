@@ -128,10 +128,8 @@ class TestExportStep:
         output_path = tmp_path / "test.stp"
         export_step(mock_app, mock_document, output_path)
 
-        # Should set ApplicationProtocolType to AP214 (3)
-        assert options.Value.__setitem__.called
-        call_args = options.Value.__setitem__.call_args
-        assert call_args[0] == ("ApplicationProtocolType", AP214)
+        # Should attempt to set ApplicationProtocolType to AP214 (3) via Item()
+        options.Item.assert_called_with("ApplicationProtocolType", AP214)
 
     @patch('inventor_exporter.extraction.geometry.win32com.client.CastTo')
     def test_export_step_sets_custom_protocol(self, mock_castto, mock_app, mock_document, tmp_path):
@@ -146,10 +144,8 @@ class TestExportStep:
         output_path = tmp_path / "test.stp"
         export_step(mock_app, mock_document, output_path, protocol=AP242)
 
-        # Should set ApplicationProtocolType to AP242 (5)
-        assert options.Value.__setitem__.called
-        call_args = options.Value.__setitem__.call_args
-        assert call_args[0] == ("ApplicationProtocolType", AP242)
+        # Should attempt to set ApplicationProtocolType to AP242 (5) via Item()
+        options.Item.assert_called_with("ApplicationProtocolType", AP242)
 
     @patch('inventor_exporter.extraction.geometry.win32com.client.CastTo')
     def test_export_step_sets_output_path(self, mock_castto, mock_app, mock_document, tmp_path):
