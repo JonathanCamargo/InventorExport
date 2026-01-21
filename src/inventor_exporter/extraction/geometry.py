@@ -99,9 +99,9 @@ def export_step(
         except Exception as e:
             logger.debug(f"HasSaveCopyAsOptions failed: {e}")
 
-        # Create data medium with output path
+        # Create data medium with output path (must be absolute for Inventor COM)
         data_medium = late_bind(app.TransientObjects.CreateDataMedium())
-        data_medium.FileName = str(output_path)
+        data_medium.FileName = str(output_path.absolute())
 
         # Perform export
         translator.SaveCopyAs(document, context, options, data_medium)
