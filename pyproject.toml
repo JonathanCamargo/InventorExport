@@ -40,8 +40,8 @@ dev = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/jonathan/inventor-exporter"
-Repository = "https://github.com/jonathan/inventor-exporter"
+Homepage = "https://github.com/JonathanCamargo/InventorExport"
+Repository = "https://github.com/JonathanCamargo/InventorExport"
 
 [project.scripts]
 inventorexport = "inventor_exporter.cli:main"
