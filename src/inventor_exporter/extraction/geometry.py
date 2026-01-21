@@ -83,6 +83,9 @@ def export_step(
         # Get the STEP translator add-in by GUID (use late binding)
         translator = late_bind(app.ApplicationAddIns.ItemById(STEP_TRANSLATOR_GUID))
 
+        # Ensure document is late-bound (may come from early-bound traversal)
+        document = late_bind(document)
+
         # Create translation context
         context = late_bind(app.TransientObjects.CreateTranslationContext())
         context.Type = 13059  # kFileBrowseIOMechanism
