@@ -27,6 +27,30 @@ import win32com.client
 import win32com.client.dynamic
 
 
+def late_bind(obj: Any) -> Any:
+    """Convert a COM object to late-binding to avoid gen_py cache issues.
+
+    The gen_py cache can get corrupted or mismatched with the installed
+    Inventor version, causing AttributeError for valid properties. This
+    function forces late-binding which queries the object directly.
+
+    Args:
+        obj: COM object (possibly early-bound via gen_py)
+
+    Returns:
+        Late-bound COM object that queries properties dynamically
+    """
+    if obj is None:
+        return None
+    try:
+        # Get the underlying IDispatch and wrap with dynamic dispatch
+        if hasattr(obj, '_oleobj_'):
+            return win32com.client.dynamic.Dispatch(obj._oleobj_)
+        return obj
+    except Exception:
+        return obj
+
+
 class InventorNotRunningError(Exception):
     """Raised when Inventor is not running.
 

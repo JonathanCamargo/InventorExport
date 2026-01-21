@@ -13,6 +13,7 @@ from typing import Any, Optional
 
 import win32com.client
 
+from inventor_exporter.core.com import late_bind
 from inventor_exporter.model import Material
 
 logger = logging.getLogger(__name__)
@@ -89,8 +90,8 @@ def extract_material(part_doc: Any) -> Optional[Material]:
         - German: "Dichte", "Physikalische_Dichte"
         Uses partial matching to handle all cases.
     """
-    # Get the active material
-    material = part_doc.ActiveMaterial
+    # Get the active material (use late binding to avoid gen_py cache issues)
+    material = late_bind(part_doc.ActiveMaterial)
     if material is None:
         logger.warning(
             f"No material assigned to part: {part_doc.DisplayName}"
@@ -100,8 +101,8 @@ def extract_material(part_doc: Any) -> Optional[Material]:
     material_name = material.DisplayName
     logger.debug(f"Processing material: {material_name}")
 
-    # Get physical properties asset
-    phys_props = material.PhysicalPropertiesAsset
+    # Get physical properties asset (also use late binding)
+    phys_props = late_bind(material.PhysicalPropertiesAsset)
     if phys_props is None:
         logger.warning(
             f"Material '{material_name}' has no PhysicalPropertiesAsset, "

@@ -11,6 +11,7 @@ from inventor_exporter.core.rotation import (
 from inventor_exporter.core.com import (
     inventor_app,
     active_assembly,
+    late_bind,
     InventorNotRunningError,
     NotAssemblyError,
 )
@@ -32,6 +33,7 @@ __all__ = [
     # COM
     "inventor_app",
     "active_assembly",
+    "late_bind",
     "InventorNotRunningError",
     "NotAssemblyError",
 ]

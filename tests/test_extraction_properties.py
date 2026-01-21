@@ -6,7 +6,7 @@ during testing.
 
 import numpy as np
 import pytest
-from unittest.mock import MagicMock, PropertyMock
+from unittest.mock import MagicMock, PropertyMock, patch
 
 from inventor_exporter.extraction.material import (
     extract_material,
@@ -23,7 +23,8 @@ from inventor_exporter.model import Material, Inertia
 class TestExtractMaterial:
     """Tests for material extraction."""
 
-    def test_extract_material_with_density(self):
+    @patch('inventor_exporter.extraction.material.late_bind', side_effect=lambda x: x)
+    def test_extract_material_with_density(self, mock_late_bind):
         """Test extracting material with density property."""
         # Mock the property with density
         mock_prop = MagicMock()
@@ -54,7 +55,8 @@ class TestExtractMaterial:
         # 0.00785 kg/cm^3 * 1,000,000 = 7850 kg/m^3
         assert result.density == pytest.approx(7850.0)
 
-    def test_extract_material_handles_localization_german(self):
+    @patch('inventor_exporter.extraction.material.late_bind', side_effect=lambda x: x)
+    def test_extract_material_handles_localization_german(self, mock_late_bind):
         """Test that German property name 'Dichte' is recognized."""
         # Mock the property with German name
         mock_prop = MagicMock()
@@ -85,7 +87,8 @@ class TestExtractMaterial:
         # 0.0027 kg/cm^3 * 1,000,000 = 2700 kg/m^3
         assert result.density == pytest.approx(2700.0)
 
-    def test_extract_material_no_material(self):
+    @patch('inventor_exporter.extraction.material.late_bind', side_effect=lambda x: x)
+    def test_extract_material_no_material(self, mock_late_bind):
         """Test handling of part with no material assigned."""
         mock_part_doc = MagicMock()
         mock_part_doc.ActiveMaterial = None
@@ -95,7 +98,8 @@ class TestExtractMaterial:
 
         assert result is None
 
-    def test_extract_material_no_physical_properties(self):
+    @patch('inventor_exporter.extraction.material.late_bind', side_effect=lambda x: x)
+    def test_extract_material_no_physical_properties(self, mock_late_bind):
         """Test handling of material without PhysicalPropertiesAsset."""
         # Mock ActiveMaterial without physical properties
         mock_material = MagicMock()
@@ -114,7 +118,8 @@ class TestExtractMaterial:
         assert result.name == "CustomMaterial"
         assert result.density == DEFAULT_DENSITY
 
-    def test_extract_material_density_not_found(self):
+    @patch('inventor_exporter.extraction.material.late_bind', side_effect=lambda x: x)
+    def test_extract_material_density_not_found(self, mock_late_bind):
         """Test handling when density property not found in asset."""
         # Mock a property that's not density
         mock_prop = MagicMock()

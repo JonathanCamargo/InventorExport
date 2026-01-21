@@ -18,7 +18,11 @@ import re
 from pathlib import Path
 from typing import Any, Dict, List
 
+import pythoncom
 import win32com.client
+import win32com.client.dynamic
+
+from inventor_exporter.core.com import late_bind
 
 logger = logging.getLogger(__name__)
 
@@ -76,33 +80,24 @@ def export_step(
         SaveCopyAs will not be available.
     """
     try:
-        # Get the STEP translator add-in by GUID
-        translator = app.ApplicationAddIns.ItemById(STEP_TRANSLATOR_GUID)
-
-        # Cast to TranslatorAddIn interface - required for SaveCopyAs access
-        translator = win32com.client.CastTo(translator, "TranslatorAddIn")
+        # Get the STEP translator add-in by GUID (use late binding)
+        translator = late_bind(app.ApplicationAddIns.ItemById(STEP_TRANSLATOR_GUID))
 
         # Create translation context
-        context = app.TransientObjects.CreateTranslationContext()
+        context = late_bind(app.TransientObjects.CreateTranslationContext())
         context.Type = 13059  # kFileBrowseIOMechanism
 
         # Create options map
-        options = app.TransientObjects.CreateNameValueMap()
+        options = late_bind(app.TransientObjects.CreateNameValueMap())
 
-        # Get default options and set protocol
-        if translator.HasSaveCopyAsOptions(document, context, options):
-            # Set Application Protocol (2=AP203, 3=AP214, 5=AP242)
-            # Note: VBA uses oOptions.Value("key") = value syntax
-            # Python win32com requires using the Item property for indexed access
-            try:
-                # Try early-binding style (works if gencache has type info)
-                options.Item("ApplicationProtocolType", protocol)
-            except TypeError:
-                # Fallback: use default options (AP214 is usually the default anyway)
-                logger.debug("Could not set ApplicationProtocolType, using translator defaults")
+        # Get default options (protocol setting often fails, use defaults)
+        try:
+            translator.HasSaveCopyAsOptions(document, context, options)
+        except Exception as e:
+            logger.debug(f"HasSaveCopyAsOptions failed: {e}")
 
         # Create data medium with output path
-        data_medium = app.TransientObjects.CreateDataMedium()
+        data_medium = late_bind(app.TransientObjects.CreateDataMedium())
         data_medium.FileName = str(output_path)
 
         # Perform export

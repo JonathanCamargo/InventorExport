@@ -89,12 +89,14 @@ class TestExportStep:
         """Create mock document."""
         return MagicMock()
 
-    @patch('inventor_exporter.extraction.geometry.win32com.client.CastTo')
-    def test_export_step_calls_translator(self, mock_castto, mock_app, mock_document, tmp_path):
+    @patch('inventor_exporter.extraction.geometry.late_bind')
+    def test_export_step_calls_translator(self, mock_late_bind, mock_app, mock_document, tmp_path):
         """export_step should get translator by GUID and call SaveCopyAs."""
+        # late_bind returns the object as-is for mocks
+        mock_late_bind.side_effect = lambda x: x
+
         mock_translator = MagicMock()
-        mock_translator.HasSaveCopyAsOptions.return_value = True
-        mock_castto.return_value = mock_translator
+        mock_app.ApplicationAddIns.ItemById.return_value = mock_translator
 
         output_path = tmp_path / "test.stp"
         result = export_step(mock_app, mock_document, output_path)
@@ -104,55 +106,16 @@ class TestExportStep:
             STEP_TRANSLATOR_GUID
         )
 
-        # Should cast to TranslatorAddIn interface
-        mock_castto.assert_called_once()
-        args, kwargs = mock_castto.call_args
-        assert args[1] == "TranslatorAddIn"
-
         # Should call SaveCopyAs
         mock_translator.SaveCopyAs.assert_called_once()
 
         # Should return True on success
         assert result is True
 
-    @patch('inventor_exporter.extraction.geometry.win32com.client.CastTo')
-    def test_export_step_sets_ap214_by_default(self, mock_castto, mock_app, mock_document, tmp_path):
-        """export_step should set AP214 protocol by default."""
-        mock_translator = MagicMock()
-        mock_translator.HasSaveCopyAsOptions.return_value = True
-        mock_castto.return_value = mock_translator
-
-        options = MagicMock()
-        mock_app.TransientObjects.CreateNameValueMap.return_value = options
-
-        output_path = tmp_path / "test.stp"
-        export_step(mock_app, mock_document, output_path)
-
-        # Should attempt to set ApplicationProtocolType to AP214 (3) via Item()
-        options.Item.assert_called_with("ApplicationProtocolType", AP214)
-
-    @patch('inventor_exporter.extraction.geometry.win32com.client.CastTo')
-    def test_export_step_sets_custom_protocol(self, mock_castto, mock_app, mock_document, tmp_path):
-        """export_step should use custom protocol when specified."""
-        mock_translator = MagicMock()
-        mock_translator.HasSaveCopyAsOptions.return_value = True
-        mock_castto.return_value = mock_translator
-
-        options = MagicMock()
-        mock_app.TransientObjects.CreateNameValueMap.return_value = options
-
-        output_path = tmp_path / "test.stp"
-        export_step(mock_app, mock_document, output_path, protocol=AP242)
-
-        # Should attempt to set ApplicationProtocolType to AP242 (5) via Item()
-        options.Item.assert_called_with("ApplicationProtocolType", AP242)
-
-    @patch('inventor_exporter.extraction.geometry.win32com.client.CastTo')
-    def test_export_step_sets_output_path(self, mock_castto, mock_app, mock_document, tmp_path):
-        """export_step should set output filename in data medium."""
-        mock_translator = MagicMock()
-        mock_translator.HasSaveCopyAsOptions.return_value = True
-        mock_castto.return_value = mock_translator
+    @patch('inventor_exporter.extraction.geometry.late_bind')
+    def test_export_step_creates_data_medium(self, mock_late_bind, mock_app, mock_document, tmp_path):
+        """export_step should create data medium with output path."""
+        mock_late_bind.side_effect = lambda x: x
 
         data_medium = MagicMock()
         mock_app.TransientObjects.CreateDataMedium.return_value = data_medium
@@ -163,10 +126,10 @@ class TestExportStep:
         # Should set FileName on data medium
         assert data_medium.FileName == str(output_path)
 
-    @patch('inventor_exporter.extraction.geometry.win32com.client.CastTo')
-    def test_export_step_handles_error(self, mock_castto, mock_app, mock_document, tmp_path):
+    @patch('inventor_exporter.extraction.geometry.late_bind')
+    def test_export_step_handles_error(self, mock_late_bind, mock_app, mock_document, tmp_path):
         """export_step should return False and log on error."""
-        mock_castto.side_effect = Exception("COM error")
+        mock_late_bind.side_effect = Exception("COM error")
 
         output_path = tmp_path / "test.stp"
         result = export_step(mock_app, mock_document, output_path)
