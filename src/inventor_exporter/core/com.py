@@ -24,6 +24,7 @@ from typing import Any, Generator
 
 import pythoncom
 import win32com.client
+import win32com.client.dynamic
 
 
 class InventorNotRunningError(Exception):
@@ -71,8 +72,16 @@ def inventor_app() -> Generator[Any, None, None]:
     app = None
     try:
         logger.debug("Connecting to Inventor...")
-        app = win32com.client.GetActiveObject("Inventor.Application")
-        logger.debug(f"Connected to Inventor {app.SoftwareVersion.DisplayVersion}")
+        # Use dynamic dispatch to avoid gen_py cache issues
+        # (gen_py cache can get corrupted or mismatched with Inventor version)
+        app = win32com.client.dynamic.Dispatch(
+            pythoncom.GetActiveObject("Inventor.Application")
+        )
+        try:
+            version = app.SoftwareVersion.DisplayVersion
+            logger.debug(f"Connected to Inventor {version}")
+        except AttributeError:
+            logger.debug("Connected to Inventor (version info unavailable)")
         yield app
     except pythoncom.com_error as e:
         # MK_E_UNAVAILABLE: The object is not running

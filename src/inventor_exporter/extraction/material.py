@@ -38,30 +38,32 @@ def _get_asset_value(prop: Any) -> Optional[float]:
     Returns:
         Float value if accessible, None otherwise
     """
-    # Method 1: Try casting to FloatAssetValue (most reliable for density)
+    # Method 1: Try direct Value access (works with late binding)
+    try:
+        return prop.Value
+    except (AttributeError, TypeError):
+        pass
+
+    # Method 2: Try accessing via fresh late binding dispatch
+    try:
+        import win32com.client.dynamic
+        import pythoncom
+        late_prop = win32com.client.dynamic.Dispatch(prop._oleobj_)
+        return late_prop.Value
+    except Exception:
+        pass
+
+    # Method 3: Try casting to FloatAssetValue (early binding)
     try:
         float_prop = win32com.client.CastTo(prop, "FloatAssetValue")
         return float_prop.Value
     except Exception:
         pass
 
-    # Method 2: Try direct Value access (works with some bindings)
-    try:
-        return prop.Value
-    except AttributeError:
-        pass
-
-    # Method 3: Try get_Value method (early binding style)
+    # Method 4: Try get_Value method (some early binding styles)
     try:
         return prop.get_Value()
     except AttributeError:
-        pass
-
-    # Method 4: Try accessing via late binding dispatch
-    try:
-        late_prop = win32com.client.Dispatch(prop)
-        return late_prop.Value
-    except Exception:
         pass
 
     return None
