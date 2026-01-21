@@ -1,5 +1,6 @@
 """Command-line interface for inventor-exporter."""
 
+import logging
 import click
 from pathlib import Path
 
@@ -7,6 +8,15 @@ from inventor_exporter import __version__
 from inventor_exporter.core.com import InventorNotRunningError, NotAssemblyError
 from inventor_exporter.extraction import InventorClient
 from inventor_exporter.writers import WriterRegistry, get_writer
+
+
+def setup_logging(verbose: bool):
+    """Configure logging for CLI output."""
+    level = logging.DEBUG if verbose else logging.WARNING
+    logging.basicConfig(
+        level=level,
+        format='%(message)s',
+    )
 
 
 def list_formats_callback(ctx, param, value):
@@ -44,8 +54,13 @@ def list_formats_callback(ctx, param, value):
     callback=list_formats_callback,
     help='List available output formats and exit.'
 )
+@click.option(
+    '--verbose', '-v',
+    is_flag=True,
+    help='Show detailed extraction progress.'
+)
 @click.version_option(version=__version__)
-def main(format: str, output: str):
+def main(format: str, output: str, verbose: bool):
     """Export Autodesk Inventor assembly to simulation format.
 
     Connects to a running Inventor instance and exports the active
@@ -55,6 +70,7 @@ def main(format: str, output: str):
 
         inventorexport --format adams --output model.cmd
     """
+    setup_logging(verbose)
     output_path = Path(output)
 
     # Create output directory if needed
@@ -64,7 +80,13 @@ def main(format: str, output: str):
         # Extract assembly from Inventor
         click.echo("Connecting to Inventor...")
         client = InventorClient()
+        click.echo("Extracting assembly...")
         model = client.extract_assembly(output_dir=output_path.parent)
+
+        # Show extraction summary
+        click.echo(f"  Found {len(model.bodies)} bodies, {len(model.materials)} materials")
+        geometry_count = sum(1 for b in model.bodies if b.geometry_file is not None)
+        click.echo(f"  Exported {geometry_count} STEP files")
 
         # Get writer and export
         click.echo(f"Writing {format} format...")
