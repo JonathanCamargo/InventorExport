@@ -106,3 +106,6 @@ class MyFormatWriter:
 ## License
 
 MIT
+
+This repository was developed with the assistance of Claude code-generation tools. Portions of the code, documentation, and structural scaffolding may have been produced or refined using AI-assisted generation.
+Users of this repository should evaluate the software according to their own quality, security, and compliance standards before deploying it in production environments.
