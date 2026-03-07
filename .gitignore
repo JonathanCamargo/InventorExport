@@ -1,3 +1,5 @@
 inventor_export.log
 __pycache__/
 *.egg-info/
+./claude
+./planning
