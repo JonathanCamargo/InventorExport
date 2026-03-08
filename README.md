@@ -1,6 +1,6 @@
-# Inventor Assembly Exporter
+# Inventor Assembly Exporter & Importer
 
-Export Autodesk Inventor assemblies to simulation formats (ADAMS, URDF, SDF, MuJoCo).
+Export Autodesk Inventor assemblies to simulation formats (ADAMS, URDF, SDF, MuJoCo) and batch-import STL meshes into Inventor Part (.ipt) files.
 
 ## Requirements
 
@@ -48,6 +48,23 @@ inventorexport --list-formats
 | SDF | `.sdf` | `.stl` (meshes/) |
 | MuJoCo | `.xml` | `.stl` (meshes/) |
 
+## STL Import
+
+Batch-convert STL mesh files to Inventor Part (.ipt) files with solid bodies. The importer opens each STL in Inventor, converts the mesh to a BRep solid via the Mesh Enabler add-in, and saves the result as an IPT — fully automated, no manual clicks required.
+
+```bash
+# Convert all STL files in a folder (IPTs saved alongside originals)
+inventorimport path/to/stl_folder
+
+# Specify a separate output directory
+inventorimport path/to/stl_folder --output path/to/ipt_output
+
+# Verbose logging
+inventorimport path/to/stl_folder -v
+```
+
+**Note:** Requires the Mesh Enabler add-in to be installed in Inventor (included by default in Inventor 2025+).
+
 ## Testing
 
 ```bash
@@ -83,7 +100,8 @@ src/inventor_exporter/
   model/          # Data model (AssemblyModel, Body, Material, Transform)
   extraction/     # Inventor COM automation (traversal, STEP export)
   writers/        # Format writers (FormatWriter protocol + implementations)
-  cli.py          # Click-based CLI
+  importing/      # STL-to-IPT batch import (mesh conversion via COM)
+  cli.py          # Click-based CLI (inventorexport + inventorimport)
 ```
 
 ## Adding a New Format

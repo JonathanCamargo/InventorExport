@@ -45,6 +45,7 @@ Repository = "https://github.com/JonathanCamargo/InventorExport"
 
 [project.scripts]
 inventorexport = "inventor_exporter.cli:main"
+inventorimport = "inventor_exporter.cli:import_cmd"
 
 [tool.setuptools.packages.find]
 where = ["src"]

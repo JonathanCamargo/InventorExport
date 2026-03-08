@@ -7,6 +7,7 @@ from pathlib import Path
 from inventor_exporter import __version__
 from inventor_exporter.core.com import InventorNotRunningError, NotAssemblyError
 from inventor_exporter.extraction import InventorClient
+from inventor_exporter.importing import import_stl_folder
 from inventor_exporter.writers import WriterRegistry, get_writer
 
 
@@ -119,6 +120,54 @@ def main(format: str, output: str, verbose: bool):
     except KeyError as e:
         # From WriterRegistry.get_or_raise - shouldn't happen with Choice validation
         raise click.ClickException(str(e))
+
+
+@click.command()
+@click.argument(
+    'input_dir',
+    type=click.Path(exists=True, file_okay=False, resolve_path=True),
+)
+@click.option(
+    '--output', '-o',
+    type=click.Path(file_okay=False),
+    default=None,
+    help='Output directory for IPT files. Defaults to input directory.'
+)
+@click.option(
+    '--verbose', '-v',
+    is_flag=True,
+    help='Show detailed conversion progress.'
+)
+@click.version_option(version=__version__)
+def import_cmd(input_dir: str, output: str | None, verbose: bool):
+    """Import STL files from a folder and convert to Inventor IPT.
+
+    Opens each STL file in Inventor, converts the mesh to a base feature,
+    deletes the original mesh, and saves as .ipt with the same name.
+
+    Example:
+
+        inventorimport ./stl_files --output ./ipt_files
+    """
+    setup_logging(verbose)
+    input_path = Path(input_dir)
+    output_path = Path(output) if output else None
+
+    try:
+        click.echo(f"Scanning {input_path} for STL files...")
+        created = import_stl_folder(input_path, output_path)
+
+        if created:
+            click.echo(f"Converted {len(created)} STL files to IPT:")
+            for ipt in created:
+                click.echo(f"  {ipt.name}")
+        else:
+            click.echo("No STL files found.")
+
+    except InventorNotRunningError:
+        raise click.ClickException(
+            "Inventor is not running. Please start Inventor."
+        )
 
 
 if __name__ == '__main__':
