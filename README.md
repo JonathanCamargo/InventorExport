@@ -59,11 +59,61 @@ inventorimport path/to/stl_folder
 # Specify a separate output directory
 inventorimport path/to/stl_folder --output path/to/ipt_output
 
+# STL files are in inches (default assumes mm)
+inventorimport path/to/stl_folder --units in
+
 # Verbose logging
 inventorimport path/to/stl_folder -v
 ```
 
 **Note:** Requires the Mesh Enabler add-in to be installed in Inventor (included by default in Inventor 2025+).
+
+### STL units and Inventor templates
+
+STL files contain no unit information — vertex coordinates are just numbers. When Inventor opens an STL via `Documents.Open()`, it interprets those numbers using the **default part template's length units**. If your template uses inches (common in US installations) but the STL was designed in millimeters, every dimension will be 25.4x too large.
+
+`inventorimport` handles this automatically: it detects your Inventor template's units, compares them to the `--units` flag (default: `mm`), and prescales the STL vertices before opening so that Inventor's interpretation produces the correct geometry regardless of template settings.
+
+| STL units | Template units | What happens |
+|-----------|---------------|--------------|
+| mm | mm | No correction needed |
+| mm | in | Vertices prescaled by 1/25.4 |
+| in | mm | Vertices prescaled by 25.4 |
+| any | any | Automatic compensation |
+
+## Units
+
+Understanding unit handling is important for getting correctly-scaled output.
+
+### Export pipeline (inventorexport)
+
+```
+Inventor internal (cm) → STEP file → OCCT/CadQuery (mm) → STL meshes (mm)
+```
+
+- **Inventor** always stores geometry in centimeters internally, regardless of document display settings.
+- **STEP export** writes geometry with a unit header. OCCT (the geometry kernel inside CadQuery) reads this header and normalizes all coordinates to **millimeters**.
+- **STL meshes** produced by the export pipeline are always in **mm**.
+- **Body positions, rotations, mass, and inertia** are extracted from Inventor and converted to SI units (meters, kg, kg·m²) in the internal representation.
+
+The format writers account for the mm mesh / meters body mismatch:
+
+| Format | Body units | Mesh units | Mesh scale applied |
+|--------|-----------|------------|-------------------|
+| MuJoCo | meters | mm | `scale="0.001 0.001 0.001"` on `<mesh>` |
+| URDF | meters | mm | `scale="0.001 0.001 0.001"` on `<mesh>` |
+| SDF | meters | mm | `<scale>0.001 0.001 0.001</scale>` |
+| ADAMS | mm | N/A (uses STEP) | No conversion needed |
+
+### Debugging transform issues
+
+If body positions appear wrong (e.g., all zeros), use `--debug-transforms` to dump the raw 4x4 transformation matrix for each part:
+
+```bash
+inventorexport --format mujoco --output model.xml --debug-transforms
+```
+
+This logs the full matrix without enabling all verbose output, helping diagnose whether Inventor is returning identity transforms for certain assembly types.
 
 ## Testing
 

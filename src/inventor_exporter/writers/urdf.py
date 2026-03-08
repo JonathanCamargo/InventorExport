@@ -288,10 +288,14 @@ class URDFWriter:
         etree.SubElement(visual, "origin", xyz="0 0 0", rpy="0 0 0")
 
         # Geometry with mesh reference
+        # OCCT normalizes STEP geometry to mm; URDF expects meters.
         geometry = etree.SubElement(visual, "geometry")
         # Use forward slashes for cross-platform compatibility in URDF
         mesh_filename = str(mesh_path).replace("\\", "/")
-        etree.SubElement(geometry, "mesh", filename=mesh_filename)
+        etree.SubElement(
+            geometry, "mesh", filename=mesh_filename,
+            scale="0.001 0.001 0.001",
+        )
 
         # Material reference (if body has material)
         if body.material_name:
@@ -317,7 +321,10 @@ class URDFWriter:
         # Geometry with same mesh as visual
         geometry = etree.SubElement(collision, "geometry")
         mesh_filename = str(mesh_path).replace("\\", "/")
-        etree.SubElement(geometry, "mesh", filename=mesh_filename)
+        etree.SubElement(
+            geometry, "mesh", filename=mesh_filename,
+            scale="0.001 0.001 0.001",
+        )
 
     def _add_fixed_joint(self, parent: etree._Element, body: Body) -> None:
         """Add fixed joint connecting body to base_link.

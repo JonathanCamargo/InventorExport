@@ -61,6 +61,14 @@ def extract_transform(occurrence) -> Transform:
     """
     matrix = occurrence.Transformation
 
+    # Dump full 4x4 matrix for debugging transform issues
+    if logger.isEnabledFor(logging.DEBUG):
+        name = getattr(occurrence, 'Name', '?')
+        logger.debug(f"Transform matrix for {name}:")
+        for r in range(1, 5):
+            row = [matrix.Cell(r, c) for c in range(1, 5)]
+            logger.debug(f"  Row {r}: [{row[0]:12.6f} {row[1]:12.6f} {row[2]:12.6f} {row[3]:12.6f}]")
+
     # Extract translation from row 4 (1-indexed)
     # Inventor internal units are cm
     x_cm = matrix.Cell(4, 1)

@@ -2,11 +2,24 @@
 
 Opens each STL in Inventor, converts the mesh to a base feature (BRep solid),
 deletes the original mesh, and saves as .ipt.
+
+Unit handling:
+    STL files are unitless. Inventor interprets vertex coordinates using the
+    default part template's length units at Documents.Open() time. If the
+    template uses inches but the STL is in mm, vertices are 25.4x too large.
+    This cannot be corrected after opening.
+
+    To compensate, we detect the template units by opening a temporary blank
+    part, compare with the user's --units flag, and prescale the STL binary
+    data before opening in Inventor.
 """
 
 import ctypes
 import ctypes.wintypes
 import logging
+import os
+import struct
+import tempfile
 import threading
 import time
 from pathlib import Path
@@ -18,9 +31,45 @@ logger = logging.getLogger(__name__)
 
 MESH_FEATURE_TYPE = 84052736
 
+# Inventor UnitsTypeEnum values for length units
+_LENGTH_UNITS = {
+    "mm": 11267,   # kMillimeterLengthUnits
+    "cm": 11266,   # kCentimeterLengthUnits
+    "m":  11268,   # kMeterLengthUnits
+    "in": 11272,   # kInchLengthUnits
+    "ft": 11273,   # kFootLengthUnits
+}
 
-def import_stl_folder(input_dir: Path, output_dir: Path | None = None) -> List[Path]:
-    """Import all STL files from a folder, converting each to IPT."""
+# Reverse map for logging
+_LENGTH_UNIT_NAMES = {v: k for k, v in _LENGTH_UNITS.items()}
+
+# Conversion factors from each unit to centimeters (Inventor internal unit)
+_UNIT_TO_CM = {
+    "mm": 0.1,
+    "cm": 1.0,
+    "m":  100.0,
+    "in": 2.54,
+    "ft": 30.48,
+}
+
+# Inventor DocumentTypeEnum
+_kPartDocumentObject = 12290
+
+
+def import_stl_folder(
+    input_dir: Path,
+    output_dir: Path | None = None,
+    units: str = "mm",
+) -> List[Path]:
+    """Import all STL files from a folder, converting each to IPT.
+
+    Args:
+        input_dir: Directory containing STL files.
+        output_dir: Output directory for IPT files. Defaults to input_dir.
+        units: Length unit of the STL coordinates (mm, cm, m, in, ft).
+            STL files are unitless; this tells Inventor how to interpret the
+            vertex coordinates. Default "mm" (the de facto STL convention).
+    """
     if output_dir is None:
         output_dir = input_dir
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -34,9 +83,26 @@ def import_stl_folder(input_dir: Path, output_dir: Path | None = None) -> List[P
 
     created = []
     with inventor_app() as app:
+        # Detect template units by probing the first STL file
+        template_units = _detect_template_units(app, stl_files[0])
+        if template_units is None:
+            logger.warning("Could not detect template units, assuming they match --units")
+            prescale = 1.0
+        elif template_units == units:
+            logger.info(f"Template units match STL units: {units}")
+            prescale = 1.0
+        else:
+            prescale = _compute_prescale(template_units, units)
+            logger.warning(
+                f"Template uses '{template_units}' but STL units are '{units}'. "
+                f"Prescaling vertices by {prescale:.6f} to compensate."
+            )
+
         for stl_file in stl_files:
             try:
-                ipt_path = import_single_stl(app, stl_file, output_dir)
+                ipt_path = import_single_stl(
+                    app, stl_file, output_dir, prescale,
+                )
                 created.append(ipt_path)
                 logger.info(f"Converted: {stl_file.name} -> {ipt_path.name}")
             except Exception as e:
@@ -194,11 +260,123 @@ def _dismiss_popups(stop: threading.Event):
         stop.wait(0.1)
 
 
-def import_single_stl(app: Any, stl_path: Path, output_dir: Path) -> Path:
-    """Import a single STL file and save as IPT."""
+def _detect_template_units(app: Any, stl_path: Path) -> Optional[str]:
+    """Detect the template units Inventor uses when opening an STL file.
+
+    Opens the STL file, reads the document's LengthUnits, and closes it.
+    This is more reliable than Documents.Add() which may use a different
+    default template than Documents.Open() for mesh files.
+
+    Args:
+        app: Inventor.Application COM object.
+        stl_path: An STL file to probe with.
+
+    Returns:
+        Unit key (e.g. "mm", "in") or None if detection fails.
+    """
+    try:
+        doc = late_bind(app.Documents.Open(str(stl_path.resolve())))
+        try:
+            uom = late_bind(doc.UnitsOfMeasure)
+            enum_val = uom.LengthUnits
+            return _LENGTH_UNIT_NAMES.get(enum_val)
+        finally:
+            doc.Close(True)
+    except Exception as e:
+        logger.debug(f"Could not detect template units: {e}")
+        return None
+
+
+def _compute_prescale(template_units: str, stl_units: str) -> float:
+    """Compute scale factor to compensate for unit mismatch.
+
+    When Inventor opens an STL, it interprets raw vertex coordinates using
+    the template's units. If the STL is in mm but the template is in
+    inches, a vertex value of 52 becomes 52 inches instead of 52 mm.
+
+    We prescale the STL vertices so that when Inventor misinterprets them,
+    the resulting internal cm values are correct.
+
+    Math: vertex_cm = raw_value * template_cm_per_unit
+          We want:   vertex_cm = raw_value * stl_cm_per_unit
+          So prescale raw_value by: stl_cm / template_cm
+
+    Returns:
+        Scale factor to multiply STL vertices by (1.0 if no correction needed).
+    """
+    stl_cm = _UNIT_TO_CM.get(stl_units)
+    template_cm = _UNIT_TO_CM.get(template_units)
+    if stl_cm is None or template_cm is None:
+        return 1.0
+    return stl_cm / template_cm
+
+
+def _prescale_stl(stl_path: Path, scale: float) -> Path:
+    """Create a prescaled copy of a binary STL file.
+
+    Multiplies all vertex coordinates by the scale factor. Normals are
+    left unchanged (uniform scaling preserves direction).
+
+    Args:
+        stl_path: Original STL file.
+        scale: Uniform scale factor for vertices.
+
+    Returns:
+        Path to temporary scaled STL file, or the original path if the
+        file is not binary STL (ASCII STL cannot be prescaled this way).
+    """
+    data = bytearray(stl_path.read_bytes())
+
+    # Validate binary STL: 80-byte header + 4-byte count + 50 bytes per triangle
+    if len(data) < 84:
+        logger.warning(f"STL too small to prescale: {stl_path.name}")
+        return stl_path
+
+    n_triangles = struct.unpack_from('<I', data, 80)[0]
+    expected_size = 84 + 50 * n_triangles
+
+    if len(data) != expected_size:
+        logger.warning(
+            f"Cannot prescale {stl_path.name} (ASCII STL or unexpected size). "
+            f"Geometry may have wrong scale."
+        )
+        return stl_path
+
+    # Scale vertex coordinates (skip normals)
+    # Each triangle: 12 bytes normal + 36 bytes vertices (3×3 floats) + 2 bytes attr
+    for i in range(n_triangles):
+        vertex_offset = 84 + i * 50 + 12  # skip header + normal
+        for j in range(9):  # 3 vertices × 3 coordinates
+            pos = vertex_offset + j * 4
+            val = struct.unpack_from('<f', data, pos)[0]
+            struct.pack_into('<f', data, pos, val * scale)
+
+    fd, tmp_path = tempfile.mkstemp(suffix='.stl', dir=stl_path.parent)
+    os.write(fd, bytes(data))
+    os.close(fd)
+    return Path(tmp_path)
+
+
+def import_single_stl(
+    app: Any, stl_path: Path, output_dir: Path, prescale: float = 1.0,
+) -> Path:
+    """Import a single STL file and save as IPT.
+
+    Args:
+        app: Inventor.Application COM object.
+        stl_path: Path to the STL file.
+        output_dir: Output directory for IPT file.
+        prescale: Scale factor applied to STL vertices before opening
+            to compensate for template unit mismatch. 1.0 = no change.
+    """
     ipt_path = output_dir / (stl_path.stem + ".ipt")
 
-    doc = late_bind(app.Documents.Open(str(stl_path.resolve())))
+    # Prescale STL if template units don't match source units
+    actual_stl = stl_path
+    if abs(prescale - 1.0) > 1e-6:
+        actual_stl = _prescale_stl(stl_path, prescale)
+
+    doc = late_bind(app.Documents.Open(str(actual_stl.resolve())))
 
     try:
         # Find and select mesh
@@ -263,5 +441,11 @@ def import_single_stl(app: Any, stl_path: Path, output_dir: Path) -> Path:
             doc.Close(True)
         except Exception:
             pass
+        # Clean up temp prescaled STL
+        if actual_stl != stl_path:
+            try:
+                actual_stl.unlink()
+            except OSError:
+                pass
 
     return ipt_path

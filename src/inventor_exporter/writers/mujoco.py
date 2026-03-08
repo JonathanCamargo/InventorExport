@@ -180,12 +180,15 @@ class MuJoCoWriter:
             asset: Parent <asset> element.
             mesh_names: Dict mapping body.name to mesh asset name.
         """
+        # OCCT normalizes STEP geometry to mm; MuJoCo expects meters.
+        mm_to_m = "0.001 0.001 0.001"
         for body_name, mesh_name in mesh_names.items():
             etree.SubElement(
                 asset,
                 "mesh",
                 name=mesh_name,
                 file=f"{mesh_name}.stl",
+                scale=mm_to_m,
             )
 
     def _add_material_assets(

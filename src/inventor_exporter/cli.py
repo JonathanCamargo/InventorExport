@@ -11,13 +11,17 @@ from inventor_exporter.importing import import_stl_folder
 from inventor_exporter.writers import WriterRegistry, get_writer
 
 
-def setup_logging(verbose: bool):
+def setup_logging(verbose: bool, debug_transforms: bool = False):
     """Configure logging for CLI output."""
     level = logging.DEBUG if verbose else logging.WARNING
     logging.basicConfig(
         level=level,
         format='%(message)s',
     )
+    if debug_transforms:
+        logging.getLogger('inventor_exporter.extraction.assembly').setLevel(
+            logging.DEBUG
+        )
 
 
 def list_formats_callback(ctx, param, value):
@@ -60,8 +64,13 @@ def list_formats_callback(ctx, param, value):
     is_flag=True,
     help='Show detailed extraction progress.'
 )
+@click.option(
+    '--debug-transforms',
+    is_flag=True,
+    help='Dump full 4x4 transform matrix for each occurrence (for diagnosing position issues).'
+)
 @click.version_option(version=__version__)
-def main(format: str, output: str, verbose: bool):
+def main(format: str, output: str, verbose: bool, debug_transforms: bool):
     """Export Autodesk Inventor assembly to simulation format.
 
     Connects to a running Inventor instance and exports the active
@@ -71,7 +80,7 @@ def main(format: str, output: str, verbose: bool):
 
         inventorexport --format adams --output model.cmd
     """
-    setup_logging(verbose)
+    setup_logging(verbose, debug_transforms)
     output_path = Path(output)
 
     # Create output directory if needed
@@ -134,28 +143,41 @@ def main(format: str, output: str, verbose: bool):
     help='Output directory for IPT files. Defaults to input directory.'
 )
 @click.option(
+    '--units', '-u',
+    type=click.Choice(['mm', 'cm', 'm', 'in', 'ft'], case_sensitive=False),
+    default='mm',
+    help='Length unit of STL coordinates. STL files are unitless; this tells '
+         'Inventor how to interpret vertex values. Default: mm.'
+)
+@click.option(
     '--verbose', '-v',
     is_flag=True,
     help='Show detailed conversion progress.'
 )
 @click.version_option(version=__version__)
-def import_cmd(input_dir: str, output: str | None, verbose: bool):
+def import_cmd(input_dir: str, output: str | None, units: str, verbose: bool):
     """Import STL files from a folder and convert to Inventor IPT.
 
     Opens each STL file in Inventor, converts the mesh to a base feature,
     deletes the original mesh, and saves as .ipt with the same name.
 
+    STL files have no unit information. By default, coordinates are
+    interpreted as millimeters (the de facto convention). Use --units
+    if your STLs use a different unit system.
+
     Example:
 
         inventorimport ./stl_files --output ./ipt_files
+
+        inventorimport ./stl_files --units in   # STLs are in inches
     """
     setup_logging(verbose)
     input_path = Path(input_dir)
     output_path = Path(output) if output else None
 
     try:
-        click.echo(f"Scanning {input_path} for STL files...")
-        created = import_stl_folder(input_path, output_path)
+        click.echo(f"Scanning {input_path} for STL files (units: {units})...")
+        created = import_stl_folder(input_path, output_path, units=units)
 
         if created:
             click.echo(f"Converted {len(created)} STL files to IPT:")

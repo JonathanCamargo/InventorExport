@@ -231,6 +231,9 @@ class SDFWriter:
         uri = etree.SubElement(mesh, "uri")
         # Use forward slashes for URI path (cross-platform)
         uri.text = str(mesh_path).replace("\\", "/")
+        # OCCT normalizes STEP geometry to mm; SDF expects meters.
+        scale = etree.SubElement(mesh, "scale")
+        scale.text = "0.001 0.001 0.001"
 
     def _add_collision(
         self, link: etree._Element, name: str, mesh_path: Path
@@ -250,6 +253,8 @@ class SDFWriter:
         uri = etree.SubElement(mesh, "uri")
         # Use forward slashes for URI path (cross-platform)
         uri.text = str(mesh_path).replace("\\", "/")
+        scale = etree.SubElement(mesh, "scale")
+        scale.text = "0.001 0.001 0.001"
 
     def _add_joint(self, parent: etree._Element, body: Body) -> None:
         """Add fixed joint connecting link to base_link.
