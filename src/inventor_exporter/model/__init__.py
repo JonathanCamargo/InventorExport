@@ -18,6 +18,12 @@ from inventor_exporter.model.inertia import Inertia
 from inventor_exporter.model.body import Body
 from inventor_exporter.model.constraint import ConstraintInfo
 from inventor_exporter.model.assembly import AssemblyModel
+from inventor_exporter.model.kinematic_tree import (
+    KinematicTree,
+    classify_joints,
+    get_joint_origin_in_child_frame,
+    KINEMATIC_JOINT_TYPES,
+)
 
 __all__ = [
     "Transform",
@@ -26,4 +32,8 @@ __all__ = [
     "Body",
     "ConstraintInfo",
     "AssemblyModel",
+    "KinematicTree",
+    "classify_joints",
+    "get_joint_origin_in_child_frame",
+    "KINEMATIC_JOINT_TYPES",
 ]

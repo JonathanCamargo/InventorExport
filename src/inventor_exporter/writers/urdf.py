@@ -12,18 +12,25 @@ Structure:
     - Virtual base_link at world origin
     - Physical links with visual, collision, and inertial elements
     - Rigid groups: parts connected by rigid joints are merged into one link
-    - Fixed joints connecting each link to base_link
-    - Constraint/joint metadata emitted as XML comments
+    - Kinematic tree: built via BFS spanning tree with proper joints
+    - Closed loops: handled via <gazebo> extension tags (SDF joints)
 """
 
 import logging
 from pathlib import Path
 from typing import Optional
 
+import numpy as np
 from lxml import etree
 
 from inventor_exporter.core.rotation import EulerConvention, rotation_to_euler
 from inventor_exporter.model import AssemblyModel, Body, Material
+from inventor_exporter.model.constraint import ConstraintInfo
+from inventor_exporter.model.kinematic_tree import (
+    KinematicTree,
+    classify_joints,
+    get_joint_origin_in_child_frame,
+)
 from inventor_exporter.writers.mesh_converter import MeshConverter
 from inventor_exporter.writers.registry import WriterRegistry
 
@@ -35,6 +42,15 @@ DEFAULT_COLORS = {
     "plastic": "0.3 0.3 0.3 1.0",
     "rubber": "0.2 0.2 0.2 1.0",
     "default": "0.6 0.6 0.6 1.0",
+}
+
+# Inventor joint type -> URDF joint type
+_URDF_JOINT_TYPE = {
+    "rotational_joint": "revolute",
+    "slider_joint": "prismatic",
+    "cylindrical_joint": "revolute",
+    "planar_joint": "planar",
+    "ball_joint": "fixed",  # URDF has no ball joint
 }
 
 
@@ -49,7 +65,8 @@ def _format_rpy(rotation) -> str:
 
 @WriterRegistry.register("urdf")
 class URDFWriter:
-    """URDF format writer with rigid-group merging and constraint metadata."""
+    """URDF format writer with kinematic tree, rigid-group merging, and
+    closed-loop support via Gazebo extensions."""
 
     format_name: str = "urdf"
     file_extension: str = ".urdf"
@@ -96,58 +113,215 @@ class URDFWriter:
         for material in model.materials:
             self._add_material(robot, material)
 
+        # Build kinematic tree
+        ktree = classify_joints(
+            [b.name for b in model.bodies],
+            model.constraints,
+            ground=model.ground_body,
+        )
+        groups = model.rigid_groups()
+
         # Base link
         robot.append(etree.Comment(" === Base Link (world origin) === "))
         base_link = etree.SubElement(robot, "link", name="base_link")
         base_link.append(etree.Comment(" Virtual frame - no geometry "))
 
-        # Links and joints — rigid-group aware
-        groups = model.rigid_groups()
+        # Emit links — all links are top-level (URDF is flat)
         robot.append(etree.Comment(" === Physical Links === "))
-
         emitted: set[str] = set()
-        link_names: list[str] = []
+        # Map from link name -> Body (primary body for that link)
+        link_primaries: dict[str, Body] = {}
 
         for rep, members in groups.items():
             if len(members) == 1:
                 body = model.get_body(members[0])
                 if body is not None:
                     self._add_link(robot, body, model, mesh_converter)
-                    link_names.append(body.name)
+                    link_primaries[body.name] = body
             else:
                 name = self._add_rigid_group_link(
                     robot, members, model, mesh_converter
                 )
-                link_names.append(name)
+                primary = model.get_body(members[0])
+                if primary is not None:
+                    link_primaries[name] = primary
             emitted.update(members)
 
         # Safety net
         for body in model.bodies:
             if body.name not in emitted:
                 self._add_link(robot, body, model, mesh_converter)
-                link_names.append(body.name)
+                link_primaries[body.name] = body
 
-        # Fixed joints
-        robot.append(etree.Comment(" === Fixed Joints === "))
-        group_primaries = {}
-        for rep, members in groups.items():
-            primary = model.get_body(members[0])
-            if primary is None:
+        # Resolve link name for a body (may be in a rigid group)
+        def _link_name_for(body_name: str) -> str:
+            for rep, members in groups.items():
+                if body_name in members and len(members) > 1:
+                    return "_".join(members[:2]) + "_group"
+            return body_name
+
+        # Emit joints
+        robot.append(etree.Comment(" === Joints === "))
+
+        # Root bodies: fixed joints to base_link
+        for root_name in ktree.root_bodies:
+            root_body = model.get_body(root_name)
+            if root_body is None:
                 continue
-            if len(members) == 1:
-                gname = primary.name
-            else:
-                gname = "_".join(members[:2]) + "_group"
-            group_primaries[gname] = primary
+            lname = _link_name_for(root_name)
+            # Skip if rigid group member is not the representative
+            if lname not in link_primaries:
+                continue
+            self._add_fixed_joint(robot, lname, root_body)
 
-        for lname in link_names:
-            primary = group_primaries.get(lname)
-            if primary is None:
-                primary = model.get_body(lname)
-            if primary is not None:
-                self._add_fixed_joint(robot, lname, primary)
+        # Tree joints: kinematic joints between parent and child
+        for child_name, parent_name in ktree.parent_of.items():
+            constraint = ktree.joint_for[child_name]
+            child_body = model.get_body(child_name)
+            parent_body = model.get_body(parent_name)
+            if child_body is None or parent_body is None:
+                continue
+
+            child_link = _link_name_for(child_name)
+            parent_link = _link_name_for(parent_name)
+
+            is_flipped = child_name in ktree.flipped
+            self._add_kinematic_joint(
+                robot, child_link, parent_link,
+                constraint, child_body, parent_body, is_flipped,
+            )
+
+        # Cut joints: Gazebo extensions for loop closure
+        if ktree.cut_joints:
+            self._add_gazebo_loop_joints(robot, ktree, model, _link_name_for)
 
         return robot
+
+    # ------------------------------------------------------------------
+    # Kinematic joint
+    # ------------------------------------------------------------------
+
+    def _add_kinematic_joint(
+        self,
+        parent_elem: etree._Element,
+        child_link: str,
+        parent_link: str,
+        constraint: ConstraintInfo,
+        child_body: Body,
+        parent_body: Body,
+        is_flipped: bool,
+    ) -> None:
+        """Add a proper kinematic <joint> between parent and child links."""
+        urdf_type = _URDF_JOINT_TYPE.get(constraint.type, "fixed")
+        joint_name = constraint.name.replace(":", "_") if constraint.name else (
+            f"{parent_link}_to_{child_link}_joint"
+        )
+
+        if constraint.type == "ball_joint":
+            logger.warning(
+                "URDF does not support ball joints. Joint '%s' exported as "
+                "fixed. Consider using SDF format instead.",
+                joint_name,
+            )
+
+        joint = etree.SubElement(
+            parent_elem, "joint", name=joint_name, type=urdf_type,
+        )
+        etree.SubElement(joint, "parent", link=parent_link)
+        etree.SubElement(joint, "child", link=child_link)
+
+        # Origin: transform from parent frame to child frame
+        rel = child_body.transform.relative_to(parent_body.transform)
+        etree.SubElement(
+            joint, "origin",
+            xyz=_format_xyz(rel.position),
+            rpy=_format_rpy(rel.rotation),
+        )
+
+        # Axis (in child frame)
+        if constraint.axis is not None and urdf_type in ("revolute", "prismatic", "planar"):
+            axis_world = np.array(constraint.axis)
+            axis_local = child_body.transform.rotation.T @ axis_world
+            norm = np.linalg.norm(axis_local)
+            if norm > 1e-12:
+                axis_local = axis_local / norm
+            etree.SubElement(
+                joint, "axis",
+                xyz=f"{axis_local[0]:.6g} {axis_local[1]:.6g} {axis_local[2]:.6g}",
+            )
+
+        # Limits
+        if constraint.limits is not None and urdf_type in ("revolute", "prismatic"):
+            etree.SubElement(
+                joint, "limit",
+                lower=f"{constraint.limits[0]:.6g}",
+                upper=f"{constraint.limits[1]:.6g}",
+                effort="100",
+                velocity="1",
+            )
+        elif urdf_type == "revolute":
+            # Revolute joints require limits in URDF; use defaults
+            etree.SubElement(
+                joint, "limit",
+                lower="-3.14159",
+                upper="3.14159",
+                effort="100",
+                velocity="1",
+            )
+
+    # ------------------------------------------------------------------
+    # Gazebo loop closure extensions
+    # ------------------------------------------------------------------
+
+    def _add_gazebo_loop_joints(
+        self,
+        robot: etree._Element,
+        ktree: KinematicTree,
+        model: AssemblyModel,
+        link_name_fn,
+    ) -> None:
+        """Add <gazebo> extension tags with SDF joints for loop closure."""
+        robot.append(etree.Comment(
+            " === Loop Closure (Gazebo extension) === "
+        ))
+        robot.append(etree.Comment(
+            " URDF does not support closed kinematic chains. "
+            "These joints are included as Gazebo extensions "
+            "and will only work when loaded in Gazebo (which "
+            "converts URDF to SDF). "
+        ))
+
+        for i, cj in enumerate(ktree.cut_joints):
+            body1_name = cj.occurrence_one.replace(":", "_").replace(" ", "_")
+            body2_name = cj.occurrence_two.replace(":", "_").replace(" ", "_")
+            link1 = link_name_fn(body1_name)
+            link2 = link_name_fn(body2_name)
+
+            b1 = model.get_body(body1_name)
+            b2 = model.get_body(body2_name)
+            if b1 is None or b2 is None:
+                continue
+
+            joint_name = cj.name.replace(":", "_") if cj.name else f"loop_{i}"
+            sdf_type = _URDF_JOINT_TYPE.get(cj.type, "fixed")
+            if sdf_type == "fixed" and cj.type == "ball_joint":
+                sdf_type = "ball"
+
+            gazebo = etree.SubElement(robot, "gazebo")
+            joint = etree.SubElement(
+                gazebo, "joint", name=joint_name, type=sdf_type,
+            )
+            parent_el = etree.SubElement(joint, "parent")
+            parent_el.text = link1
+            child_el = etree.SubElement(joint, "child")
+            child_el.text = link2
+
+            if cj.axis is not None and sdf_type in ("revolute", "prismatic"):
+                axis_el = etree.SubElement(joint, "axis")
+                xyz_el = etree.SubElement(axis_el, "xyz")
+                xyz_el.text = (
+                    f"{cj.axis[0]:.6g} {cj.axis[1]:.6g} {cj.axis[2]:.6g}"
+                )
 
     # ------------------------------------------------------------------
     # Constraint comments

@@ -399,32 +399,34 @@ def _extract_joint(joint) -> "ConstraintInfo | None":
         if axis is None:
             axis = _extract_axis_from_definition(defn)
 
-        # Origin point — from OriginOne.Point (occurrence-local coords, cm).
+        # Origin points — from OriginOne.Point and OriginTwo.Point.
         #
-        # IMPORTANT: OriginOne.Point is in OccurrenceOne's local (part) frame,
-        # NOT in assembly world coordinates. The axis (from face geometry via
-        # assembly proxy) IS in world coordinates — these are different frames.
+        # IMPORTANT: Each origin point is in its occurrence's local (part)
+        # frame, NOT in assembly world coordinates. The axis (from face
+        # geometry via assembly proxy) IS in world coordinates.
         #
-        # We currently assume OccurrenceOne = child body (see
-        # MuJoCoWriter._build_kinematic_tree), so OriginOne.Point can be used
-        # directly as the joint pos in the child body's MuJoCo frame.
-        #
-        # TODO(closed-loop): When adding closed-loop chain support, this
-        # assumption breaks. We must track WHICH origin the point came from
-        # (OriginOne vs OriginTwo) and transform OriginTwo.Point from the
-        # parent's local frame to the child's local frame if the fallback
-        # is used. The ConstraintInfo dataclass will need an origin_source
-        # field, and writers must handle the transform accordingly.
+        # We extract both origin points so that the kinematic tree builder
+        # can use the correct one depending on the spanning-tree parent/child
+        # assignment (which may differ from Inventor's OccurrenceOne/Two
+        # order).
+        origin_source = "OriginOne"
+        origin_two = None
+
         for attr in ("OriginOne", "OriginTwo"):
-            if origin is not None:
-                break
             try:
                 pt = getattr(defn, attr).Point
-                origin = (
+                point = (
                     InventorUnits.length_to_meters(pt.X),
                     InventorUnits.length_to_meters(pt.Y),
                     InventorUnits.length_to_meters(pt.Z),
                 )
+                if attr == "OriginOne":
+                    origin = point
+                else:
+                    origin_two = point
+                    if origin is None:
+                        origin = point
+                        origin_source = "OriginTwo"
             except Exception:
                 pass
 
@@ -470,5 +472,7 @@ def _extract_joint(joint) -> "ConstraintInfo | None":
         name=name,
         axis=axis,
         origin=origin,
+        origin_two=origin_two,
+        origin_source=origin_source,
         limits=limits,
     )

@@ -8,6 +8,7 @@ from inventor_exporter import __version__
 from inventor_exporter.core.com import InventorNotRunningError, NotAssemblyError
 from inventor_exporter.extraction import InventorClient
 from inventor_exporter.importing import import_stl_folder
+from inventor_exporter.model.kinematic_tree import classify_joints
 from inventor_exporter.writers import WriterRegistry, get_writer
 
 
@@ -69,8 +70,13 @@ def list_formats_callback(ctx, param, value):
     is_flag=True,
     help='Dump full 4x4 transform matrix for each occurrence (for diagnosing position issues).'
 )
+@click.option(
+    '--warn-loops/--no-warn-loops',
+    default=True,
+    help='Show warnings about closed kinematic loops (default: on).'
+)
 @click.version_option(version=__version__)
-def main(format: str, output: str, verbose: bool, debug_transforms: bool):
+def main(format: str, output: str, verbose: bool, debug_transforms: bool, warn_loops: bool):
     """Export Autodesk Inventor assembly to simulation format.
 
     Connects to a running Inventor instance and exports the active
@@ -101,6 +107,24 @@ def main(format: str, output: str, verbose: bool, debug_transforms: bool):
             n_groups = sum(1 for members in rigid.values() if len(members) > 1)
             if n_groups:
                 click.echo(f"  Identified {n_groups} rigid group(s)")
+
+            # Detect closed kinematic loops
+            if warn_loops:
+                ktree = classify_joints(
+                    [b.name for b in model.bodies],
+                    model.constraints,
+                    ground=model.ground_body,
+                )
+                if ktree.has_loops:
+                    click.echo(
+                        click.style(
+                            f"  Detected {len(ktree.cut_joints)} closed "
+                            f"kinematic loop(s):",
+                            fg="yellow",
+                        )
+                    )
+                    for desc in ktree.describe_loops():
+                        click.echo(click.style(f"    {desc}", fg="yellow"))
 
         # Show geometry files
         geometry_files = [b.geometry_file for b in model.bodies if b.geometry_file is not None]

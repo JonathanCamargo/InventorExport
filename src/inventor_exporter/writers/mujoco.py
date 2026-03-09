@@ -12,7 +12,8 @@ Coordinate conventions:
 Key MJCF structure:
     - Rigid groups: parts connected by rigid joints are merged into a single
       <body> with multiple <geom> elements.
-    - Constraints/joints metadata: emitted as XML comments for manual editing.
+    - Kinematic tree: built via BFS spanning tree; closed loops handled with
+      <equality> constraints (connect / weld).
     - Meshes: Referenced by name via <asset> definitions.
 """
 
@@ -26,6 +27,12 @@ from lxml import etree
 from inventor_exporter.core.rotation import rotation_to_quaternion
 from inventor_exporter.model import AssemblyModel, Body, Material
 from inventor_exporter.model.constraint import ConstraintInfo
+from inventor_exporter.model.kinematic_tree import (
+    KINEMATIC_JOINT_TYPES,
+    KinematicTree,
+    classify_joints,
+    get_joint_origin_in_child_frame,
+)
 from inventor_exporter.model.transform import Transform
 from inventor_exporter.writers.mesh_converter import MeshConverter
 from inventor_exporter.writers.registry import WriterRegistry
@@ -44,11 +51,8 @@ _MUJOCO_JOINT_TYPE = {
     "planar_joint": "slide",
 }
 
-# Joint types that define kinematic parent-child relationships
-_KINEMATIC_JOINT_TYPES = {
-    "rotational_joint", "slider_joint", "cylindrical_joint",
-    "planar_joint", "ball_joint",
-}
+# Small offset along axis for two-connect hinge constraints (meters)
+_HINGE_OFFSET = 0.01
 
 
 def _format_pos(position) -> str:
@@ -68,7 +72,7 @@ class MuJoCoWriter:
 
     Generates .xml files for MuJoCo physics simulation.  Rigid groups
     (parts connected by rigid joints) are merged into single bodies.
-    Constraint/joint metadata is emitted as XML comments.
+    Closed kinematic loops are handled via <equality> constraints.
 
     Attributes:
         format_name: "mujoco"
@@ -123,47 +127,6 @@ class MuJoCoWriter:
         return mesh_names
 
     # ------------------------------------------------------------------
-    # Kinematic tree
-    # ------------------------------------------------------------------
-
-    def _build_kinematic_tree(
-        self, model: AssemblyModel
-    ) -> tuple[dict[str, str], dict[str, ConstraintInfo], dict[str, list[str]]]:
-        """Build parent-child map from joint constraints.
-
-        Returns:
-            parent_of: child body name -> parent body name
-            joint_for: child body name -> ConstraintInfo
-            children_of: parent body name -> [child body names]
-        """
-        parent_of: dict[str, str] = {}
-        joint_for: dict[str, ConstraintInfo] = {}
-        children_of: dict[str, list[str]] = {}
-
-        body_name_set = {b.name for b in model.bodies}
-
-        for c in model.constraints:
-            if c.is_rigid or c.type not in _KINEMATIC_JOINT_TYPES:
-                continue
-            # OccurrenceOne = child, OccurrenceTwo = parent.
-            # This assumes the joint was created with child picked first.
-            # OriginOne.Point (used as joint pos) is in OccurrenceOne's local
-            # frame, so this mapping must stay consistent.
-            # TODO(closed-loop): For closed-loop chains, the parent/child
-            # assignment may need to be inferred from the kinematic tree
-            # rather than hardcoded from occurrence order. If OriginTwo.Point
-            # is used as fallback, it must be transformed from parent's frame
-            # to child's frame.
-            child = c.occurrence_one.replace(":", "_").replace(" ", "_")
-            parent = c.occurrence_two.replace(":", "_").replace(" ", "_")
-            if child in body_name_set and parent in body_name_set:
-                parent_of[child] = parent
-                joint_for[child] = c
-                children_of.setdefault(parent, []).append(child)
-
-        return parent_of, joint_for, children_of
-
-    # ------------------------------------------------------------------
     # XML tree
     # ------------------------------------------------------------------
 
@@ -187,8 +150,12 @@ class MuJoCoWriter:
         if model.constraints:
             self._add_constraint_comments(mujoco, model)
 
-        # Build kinematic tree from joint constraints
-        parent_of, joint_for, children_of = self._build_kinematic_tree(model)
+        # Build kinematic tree with loop detection
+        ktree = classify_joints(
+            [b.name for b in model.bodies],
+            model.constraints,
+            ground=model.ground_body,
+        )
         groups = model.rigid_groups()
 
         worldbody = etree.SubElement(mujoco, "worldbody")
@@ -196,12 +163,16 @@ class MuJoCoWriter:
 
         # Add root bodies (not a child in any joint) and recurse
         for body in model.bodies:
-            if body.name in emitted or body.name in parent_of:
+            if body.name in emitted or body.name in ktree.parent_of:
                 continue
             self._add_body_recursive(
-                worldbody, body, None, None,
-                model, mesh_names, children_of, joint_for, groups, emitted,
+                worldbody, body, None, None, False,
+                model, mesh_names, ktree, groups, emitted,
             )
+
+        # Equality constraints for closed-loop cut joints
+        if ktree.cut_joints:
+            self._add_equality_constraints(mujoco, ktree, model)
 
         return mujoco
 
@@ -267,10 +238,10 @@ class MuJoCoWriter:
         body: Body,
         parent_body: Optional[Body],
         joint_info: Optional[ConstraintInfo],
+        is_flipped: bool,
         model: AssemblyModel,
         mesh_names: dict[str, str],
-        children_of: dict[str, list[str]],
-        joint_for: dict[str, ConstraintInfo],
+        ktree: KinematicTree,
         groups: dict[str, list[str]],
         emitted: set[str],
     ) -> None:
@@ -287,6 +258,19 @@ class MuJoCoWriter:
             pos_str = _format_pos(body.transform.position)
             quat_str = _format_quat(body.transform.rotation)
 
+        # Resolve joint origin for flipped joints
+        origin_override = None
+        if joint_info is not None and is_flipped and parent_body is not None:
+            origin_override = get_joint_origin_in_child_frame(
+                joint_info,
+                body.name,
+                flipped=True,
+                child_rotation=body.transform.rotation,
+                parent_rotation=parent_body.transform.rotation,
+                child_position=body.transform.position,
+                parent_position=parent_body.transform.position,
+            )
+
         # Check for rigid group membership
         group_members = None
         for _rep, members in groups.items():
@@ -298,6 +282,7 @@ class MuJoCoWriter:
             body_elem = self._make_rigid_group(
                 parent_elem, group_members, model, mesh_names,
                 pos_str, quat_str, joint_info, body.transform,
+                origin_override=origin_override,
             )
             emitted.update(group_members)
         else:
@@ -306,7 +291,10 @@ class MuJoCoWriter:
                 name=body.name, pos=pos_str, quat=quat_str,
             )
             if joint_info is not None:
-                self._add_joint_elem(body_elem, joint_info, body.transform)
+                self._add_joint_elem(
+                    body_elem, joint_info, body.transform,
+                    origin_override=origin_override,
+                )
             if body.inertia is not None:
                 self._add_inertial(body_elem, body)
             mesh_name = mesh_names.get(body.name)
@@ -318,14 +306,17 @@ class MuJoCoWriter:
             emitted.add(body.name)
 
         # Recurse into children
-        for child_name in children_of.get(body.name, []):
+        for child_name in ktree.children_of.get(body.name, []):
             if child_name in emitted:
                 continue
             child_body = model.get_body(child_name)
             if child_body is not None:
+                child_flipped = child_name in ktree.flipped
                 self._add_body_recursive(
-                    body_elem, child_body, body, joint_for.get(child_name),
-                    model, mesh_names, children_of, joint_for, groups, emitted,
+                    body_elem, child_body, body,
+                    ktree.joint_for.get(child_name),
+                    child_flipped,
+                    model, mesh_names, ktree, groups, emitted,
                 )
 
     # ------------------------------------------------------------------
@@ -337,6 +328,7 @@ class MuJoCoWriter:
         body_elem: etree._Element,
         constraint: ConstraintInfo,
         body_transform: Optional[Transform] = None,
+        origin_override: Optional[tuple[float, float, float]] = None,
     ) -> None:
         """Add a MuJoCo <joint> element from constraint info.
 
@@ -362,12 +354,11 @@ class MuJoCoWriter:
                     _format_pos(axis_local),
                 )
 
-            if constraint.origin is not None:
-                # Origin from OriginOne.Point is already in the
-                # occurrence's local (part) frame — use directly.
+            origin = origin_override if origin_override is not None else constraint.origin
+            if origin is not None:
+                # Origin is in the child body's local (part) frame — use directly.
                 attribs["pos"] = (
-                    f"{constraint.origin[0]} {constraint.origin[1]} "
-                    f"{constraint.origin[2]}"
+                    f"{origin[0]} {origin[1]} {origin[2]}"
                 )
         else:
             if constraint.axis is not None:
@@ -378,6 +369,95 @@ class MuJoCoWriter:
             attribs["limited"] = "true"
             attribs["range"] = f"{constraint.limits[0]} {constraint.limits[1]}"
         etree.SubElement(body_elem, "joint", **attribs)
+
+    # ------------------------------------------------------------------
+    # Equality constraints (closed-loop cut joints)
+    # ------------------------------------------------------------------
+
+    def _add_equality_constraints(
+        self,
+        mujoco: etree._Element,
+        ktree: KinematicTree,
+        model: AssemblyModel,
+    ) -> None:
+        """Add <equality> section for loop-closing cut joints.
+
+        Revolute cut joints use two <connect> constraints offset along
+        the axis to create a hinge outside the kinematic tree.
+        Other types use a single <connect> (ball joint approximation).
+        """
+        equality = etree.SubElement(mujoco, "equality")
+        equality.append(etree.Comment(
+            " Loop-closing constraints for closed kinematic chains "
+        ))
+
+        for i, cj in enumerate(ktree.cut_joints):
+            body1 = cj.occurrence_one.replace(":", "_").replace(" ", "_")
+            body2 = cj.occurrence_two.replace(":", "_").replace(" ", "_")
+            joint_name = cj.name.replace(":", "_") if cj.name else f"loop_{i}"
+
+            # Verify both bodies exist
+            b1 = model.get_body(body1)
+            b2 = model.get_body(body2)
+            if b1 is None or b2 is None:
+                logger.warning(
+                    "Cut joint '%s': body not found (%s or %s), skipping",
+                    joint_name, body1, body2,
+                )
+                continue
+
+            if cj.origin is None:
+                logger.warning(
+                    "Cut joint '%s': no origin, using weld constraint",
+                    joint_name,
+                )
+                etree.SubElement(
+                    equality, "weld",
+                    name=joint_name,
+                    body1=body1,
+                    body2=body2,
+                )
+                continue
+
+            # Anchor in body1's frame (origin is from OccurrenceOne's frame)
+            anchor = cj.origin
+            anchor_str = f"{anchor[0]} {anchor[1]} {anchor[2]}"
+
+            if cj.type == "rotational_joint" and cj.axis is not None:
+                # Two connect constraints = hinge outside kinematic tree
+                axis_world = np.array(cj.axis)
+                axis_local = b1.transform.rotation.T @ axis_world
+                norm = np.linalg.norm(axis_local)
+                if norm > 1e-12:
+                    axis_local = axis_local / norm
+
+                anchor2 = (
+                    anchor[0] + _HINGE_OFFSET * axis_local[0],
+                    anchor[1] + _HINGE_OFFSET * axis_local[1],
+                    anchor[2] + _HINGE_OFFSET * axis_local[2],
+                )
+                anchor2_str = f"{anchor2[0]} {anchor2[1]} {anchor2[2]}"
+
+                etree.SubElement(
+                    equality, "connect",
+                    name=f"{joint_name}_a",
+                    body1=body1, body2=body2,
+                    anchor=anchor_str,
+                )
+                etree.SubElement(
+                    equality, "connect",
+                    name=f"{joint_name}_b",
+                    body1=body1, body2=body2,
+                    anchor=anchor2_str,
+                )
+            else:
+                # Single connect (ball joint approximation)
+                etree.SubElement(
+                    equality, "connect",
+                    name=joint_name,
+                    body1=body1, body2=body2,
+                    anchor=anchor_str,
+                )
 
     # ------------------------------------------------------------------
     # Rigid group (multiple parts merged into one body)
@@ -393,6 +473,7 @@ class MuJoCoWriter:
         quat_str: str,
         joint_info: Optional[ConstraintInfo],
         body_transform: Optional[Transform] = None,
+        origin_override: Optional[tuple[float, float, float]] = None,
     ) -> etree._Element:
         """Create a merged body element for a rigid group. Returns the element."""
         primary = model.get_body(member_names[0])
@@ -407,7 +488,10 @@ class MuJoCoWriter:
         )
 
         if joint_info is not None:
-            self._add_joint_elem(body_elem, joint_info, body_transform)
+            self._add_joint_elem(
+                body_elem, joint_info, body_transform,
+                origin_override=origin_override,
+            )
 
         # Combined mass (simplified: sum of masses, primary CoM)
         total_mass = 0.0

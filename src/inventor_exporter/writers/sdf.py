@@ -9,20 +9,37 @@ Coordinate conventions:
 
 Structure:
     - Rigid groups: merged into single links with multiple visuals.
-    - Constraint/joint metadata emitted as XML comments.
+    - Kinematic tree: built via BFS spanning tree with proper joints.
+    - Closed loops: all joints emitted natively (SDF supports graph
+      structures, unlike URDF).
 """
 
 import logging
 from pathlib import Path
 
+import numpy as np
 from lxml import etree
 
 from inventor_exporter.core.rotation import EulerConvention, rotation_to_euler
 from inventor_exporter.model import AssemblyModel, Body
+from inventor_exporter.model.constraint import ConstraintInfo
+from inventor_exporter.model.kinematic_tree import (
+    KinematicTree,
+    classify_joints,
+)
 from inventor_exporter.writers.mesh_converter import MeshConverter
 from inventor_exporter.writers.registry import WriterRegistry
 
 logger = logging.getLogger(__name__)
+
+# Inventor joint type -> SDF joint type
+_SDF_JOINT_TYPE = {
+    "rotational_joint": "revolute",
+    "slider_joint": "prismatic",
+    "cylindrical_joint": "revolute",
+    "planar_joint": "prismatic",
+    "ball_joint": "ball",
+}
 
 
 def _format_pose(position, rotation) -> str:
@@ -35,7 +52,8 @@ def _format_pose(position, rotation) -> str:
 
 @WriterRegistry.register("sdf")
 class SDFWriter:
-    """SDF format writer with rigid-group merging and constraint metadata."""
+    """SDF format writer with kinematic tree, rigid-group merging, and
+    native closed-loop support."""
 
     format_name: str = "sdf"
     file_extension: str = ".sdf"
@@ -82,38 +100,144 @@ class SDFWriter:
         if model.constraints:
             self._add_constraint_comments(model_elem, model)
 
+        # Build kinematic tree
+        ktree = classify_joints(
+            [b.name for b in model.bodies],
+            model.constraints,
+            ground=model.ground_body,
+        )
+        groups = model.rigid_groups()
+
         # Base link
         etree.SubElement(model_elem, "link", name="base_link")
 
-        # Links and joints — rigid-group aware
-        groups = model.rigid_groups()
+        # Emit links — rigid-group aware
         emitted: set[str] = set()
-        link_names: list[tuple[str, Body]] = []
+        # Map body name -> link name (handles rigid groups)
+        body_to_link: dict[str, str] = {}
 
         for rep, members in groups.items():
             if len(members) == 1:
                 body = model.get_body(members[0])
                 if body is not None:
                     self._add_link(model_elem, body, mesh_converter)
-                    link_names.append((body.name, body))
+                    body_to_link[body.name] = body.name
             else:
                 name, primary = self._add_rigid_group_link(
                     model_elem, members, model, mesh_converter
                 )
-                if primary is not None:
-                    link_names.append((name, primary))
+                for m in members:
+                    body_to_link[m] = name
             emitted.update(members)
 
         for body in model.bodies:
             if body.name not in emitted:
                 self._add_link(model_elem, body, mesh_converter)
-                link_names.append((body.name, body))
+                body_to_link[body.name] = body.name
 
-        # Fixed joints
-        for lname, primary in link_names:
-            self._add_joint(model_elem, lname)
+        def _link_name_for(body_name: str) -> str:
+            return body_to_link.get(body_name, body_name)
+
+        # Emit joints
+        # Root bodies: fixed joints to base_link
+        emitted_links: set[str] = set()
+        for root_name in ktree.root_bodies:
+            lname = _link_name_for(root_name)
+            if lname in emitted_links:
+                continue
+            emitted_links.add(lname)
+            self._add_fixed_joint(model_elem, lname)
+
+        # Tree joints: kinematic joints
+        for child_name, parent_name in ktree.parent_of.items():
+            constraint = ktree.joint_for[child_name]
+            child_body = model.get_body(child_name)
+            parent_body = model.get_body(parent_name)
+            if child_body is None or parent_body is None:
+                continue
+
+            child_link = _link_name_for(child_name)
+            parent_link = _link_name_for(parent_name)
+
+            self._add_kinematic_joint(
+                model_elem, child_link, parent_link,
+                constraint, child_body,
+            )
+
+        # Cut joints: SDF supports loops natively — emit as regular joints
+        if ktree.cut_joints:
+            model_elem.append(etree.Comment(
+                " Loop-closing joints (closed kinematic chains) "
+            ))
+            if ktree.cut_joints:
+                model_elem.append(etree.Comment(
+                    " Note: Gazebo Sim (Ignition) may not support all "
+                    "closed-loop configurations. Test with Gazebo Classic "
+                    "for best results. "
+                ))
+
+            for i, cj in enumerate(ktree.cut_joints):
+                body1_name = cj.occurrence_one.replace(":", "_").replace(" ", "_")
+                body2_name = cj.occurrence_two.replace(":", "_").replace(" ", "_")
+                b1 = model.get_body(body1_name)
+                b2 = model.get_body(body2_name)
+                if b1 is None or b2 is None:
+                    continue
+
+                link1 = _link_name_for(body1_name)
+                link2 = _link_name_for(body2_name)
+                self._add_kinematic_joint(
+                    model_elem, link2, link1, cj, b2,
+                )
 
         return sdf
+
+    # ------------------------------------------------------------------
+    # Kinematic joint
+    # ------------------------------------------------------------------
+
+    def _add_kinematic_joint(
+        self,
+        parent_elem: etree._Element,
+        child_link: str,
+        parent_link: str,
+        constraint: ConstraintInfo,
+        child_body: Body,
+    ) -> None:
+        """Add a kinematic <joint> element."""
+        sdf_type = _SDF_JOINT_TYPE.get(constraint.type, "fixed")
+        joint_name = constraint.name.replace(":", "_") if constraint.name else (
+            f"{parent_link}_to_{child_link}_joint"
+        )
+
+        joint = etree.SubElement(
+            parent_elem, "joint", name=joint_name, type=sdf_type,
+        )
+        parent_el = etree.SubElement(joint, "parent")
+        parent_el.text = parent_link
+        child_el = etree.SubElement(joint, "child")
+        child_el.text = child_link
+
+        # Axis (in child frame by default in SDF)
+        if constraint.axis is not None and sdf_type in ("revolute", "prismatic"):
+            axis_world = np.array(constraint.axis)
+            axis_local = child_body.transform.rotation.T @ axis_world
+            norm = np.linalg.norm(axis_local)
+            if norm > 1e-12:
+                axis_local = axis_local / norm
+            axis_el = etree.SubElement(joint, "axis")
+            xyz_el = etree.SubElement(axis_el, "xyz")
+            xyz_el.text = (
+                f"{axis_local[0]:.6g} {axis_local[1]:.6g} {axis_local[2]:.6g}"
+            )
+
+            # Limits
+            if constraint.limits is not None:
+                limit_el = etree.SubElement(axis_el, "limit")
+                lower_el = etree.SubElement(limit_el, "lower")
+                lower_el.text = f"{constraint.limits[0]:.6g}"
+                upper_el = etree.SubElement(limit_el, "upper")
+                upper_el.text = f"{constraint.limits[1]:.6g}"
 
     # ------------------------------------------------------------------
     # Constraint comments
@@ -275,7 +399,7 @@ class SDFWriter:
         scale = etree.SubElement(mesh, "scale")
         scale.text = "0.001 0.001 0.001"
 
-    def _add_joint(self, parent: etree._Element, link_name: str) -> None:
+    def _add_fixed_joint(self, parent: etree._Element, link_name: str) -> None:
         joint = etree.SubElement(
             parent, "joint", name=f"{link_name}_joint", type="fixed"
         )

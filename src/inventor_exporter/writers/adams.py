@@ -13,15 +13,45 @@ Output structure:
     2. Material definitions (material create commands)
     3. Rigid body definitions (part create rigid_body commands)
     4. Geometry imports (file geometry read commands)
+    5. Joint markers and constraints (ADAMS handles closed loops natively)
 """
 
 import io
 from pathlib import Path
 from typing import Optional
 
+import numpy as np
+
 from inventor_exporter.core.rotation import EulerConvention, rotation_to_euler
 from inventor_exporter.model import AssemblyModel, Body, Material
+from inventor_exporter.model.constraint import ConstraintInfo
+from inventor_exporter.model.kinematic_tree import KINEMATIC_JOINT_TYPES
 from inventor_exporter.writers.registry import WriterRegistry
+
+# Inventor joint type -> ADAMS joint type
+_ADAMS_JOINT_TYPE = {
+    "rotational_joint": "revolute",
+    "slider_joint": "translational",
+    "cylindrical_joint": "cylindrical",
+    "planar_joint": "planar",
+    "ball_joint": "spherical",
+    "rigid_joint": "fixed",
+}
+
+
+def _axis_to_rotation(axis: np.ndarray) -> np.ndarray:
+    """Create rotation matrix that maps z-axis to given axis direction.
+
+    Used for orienting joint markers so their z-axis aligns with the
+    joint axis (ADAMS convention for revolute, translational, etc.).
+    """
+    z = axis / np.linalg.norm(axis)
+    # Pick a non-parallel vector for cross product
+    ref = np.array([1.0, 0.0, 0.0]) if abs(z[0]) < 0.9 else np.array([0.0, 1.0, 0.0])
+    x = np.cross(z, ref)
+    x = x / np.linalg.norm(x)
+    y = np.cross(z, x)
+    return np.column_stack([x, y, z])
 
 
 @WriterRegistry.register("adams")
@@ -30,6 +60,7 @@ class AdamsWriter:
 
     Generates .cmd files compatible with MSC ADAMS View.
     Output format matches VBA implementation for validation.
+    Exports joints as ADAMS constraints (handles closed loops natively).
 
     Attributes:
         format_name: "adams"
@@ -105,6 +136,22 @@ class AdamsWriter:
             if body.geometry_file:
                 output.write(self._generate_geometry(body, model_name))
                 output.write("\n")
+
+        # Joints section
+        kinematic_joints = [
+            c for c in model.constraints
+            if c.type in KINEMATIC_JOINT_TYPES or c.type == "rigid_joint"
+        ]
+        if kinematic_joints:
+            output.write("! === Joints ===\n")
+            body_name_set = {b.name for b in model.bodies}
+            for i, constraint in enumerate(kinematic_joints, 1):
+                joint_cmd = self._generate_joint(
+                    constraint, model, model_name, i, body_name_set,
+                )
+                if joint_cmd:
+                    output.write(joint_cmd)
+                    output.write("\n")
 
         return output.getvalue()
 
@@ -196,6 +243,89 @@ class AdamsWriter:
         lines.append("   type_of_geometry = stp  &")
         lines.append(f"   file_name = {step_file}  &")
         lines.append(f"   part_name = .{model_name}.{body.name}")
+        lines.append("")
+
+        return "\n".join(lines)
+
+    def _generate_joint(
+        self,
+        constraint: ConstraintInfo,
+        model: AssemblyModel,
+        model_name: str,
+        joint_id: int,
+        body_name_set: set[str],
+    ) -> str:
+        """Generate marker and joint constraint commands.
+
+        ADAMS handles closed kinematic chains natively — all joints are
+        exported as explicit constraints between two parts.
+        """
+        part1 = constraint.occurrence_one.replace(":", "_").replace(" ", "_")
+        part2 = constraint.occurrence_two.replace(":", "_").replace(" ", "_")
+
+        if part1 not in body_name_set or part2 not in body_name_set:
+            return ""
+
+        b1 = model.get_body(part1)
+        b2 = model.get_body(part2)
+        if b1 is None or b2 is None:
+            return ""
+
+        adams_type = _ADAMS_JOINT_TYPE.get(constraint.type)
+        if adams_type is None:
+            return ""
+
+        joint_name = constraint.name.replace(":", "_").replace(" ", "_") if constraint.name else f"JOINT_{joint_id}"
+
+        lines = []
+
+        # Compute joint location in world frame (mm)
+        if constraint.origin is not None:
+            # origin is in OccurrenceOne's local frame -> world
+            origin = np.array(constraint.origin)
+            world_pt = b1.transform.rotation @ origin + b1.transform.position
+            loc_mm = world_pt * 1000.0
+        else:
+            # Fallback: midpoint of the two parts
+            loc_mm = (b1.transform.position + b2.transform.position) * 500.0
+
+        loc_str = f"{loc_mm[0]:.6f}, {loc_mm[1]:.6f}, {loc_mm[2]:.6f}"
+
+        # Compute marker orientation (z-axis = joint axis)
+        if constraint.axis is not None:
+            marker_rot = _axis_to_rotation(np.array(constraint.axis))
+            marker_angles = rotation_to_euler(
+                marker_rot, EulerConvention.ADAMS_ZXZ, degrees=True,
+            )
+        else:
+            marker_angles = (0.0, 0.0, 0.0)
+
+        ori_str = f"{marker_angles[0]:.6f}d, {marker_angles[1]:.6f}d, {marker_angles[2]:.6f}d"
+
+        # I-marker on part1
+        i_marker = f"{joint_name}_I"
+        lines.append(f"marker create  &")
+        lines.append(f"   marker_name = .{model_name}.{part1}.{i_marker}  &")
+        lines.append(f"   adams_id = {joint_id * 10}  &")
+        lines.append(f"   location = {loc_str}  &")
+        lines.append(f"   orientation = {ori_str}")
+        lines.append("")
+
+        # J-marker on part2
+        j_marker = f"{joint_name}_J"
+        lines.append(f"marker create  &")
+        lines.append(f"   marker_name = .{model_name}.{part2}.{j_marker}  &")
+        lines.append(f"   adams_id = {joint_id * 10 + 1}  &")
+        lines.append(f"   location = {loc_str}  &")
+        lines.append(f"   orientation = {ori_str}")
+        lines.append("")
+
+        # Joint constraint
+        lines.append(f"constraint create joint {adams_type}  &")
+        lines.append(f"   joint_name = .{model_name}.{joint_name}  &")
+        lines.append(f"   adams_id = {joint_id}  &")
+        lines.append(f"   i_marker_name = .{model_name}.{part1}.{i_marker}  &")
+        lines.append(f"   j_marker_name = .{model_name}.{part2}.{j_marker}")
         lines.append("")
 
         return "\n".join(lines)

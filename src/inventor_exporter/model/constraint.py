@@ -23,8 +23,13 @@ class ConstraintInfo:
         name: Inventor name for this constraint/joint.
         offset: Distance offset in meters (for mate/flush).
         angle: Angle in radians (for angle constraints).
-        axis: Axis direction as (x, y, z) unit vector.
-        origin: Origin point as (x, y, z) in meters.
+        axis: Axis direction as (x, y, z) unit vector (world coords).
+        origin: Origin point as (x, y, z) in meters. From OriginOne.Point
+            (OccurrenceOne's local frame) unless origin_source says otherwise.
+        origin_two: Origin point from OriginTwo.Point (OccurrenceTwo's local
+            frame) in meters. None if extraction failed.
+        origin_source: Which origin ``origin`` came from: "OriginOne" or
+            "OriginTwo". Matters when the spanning tree flips parent/child.
         limits: (min, max) for joint limits.
     """
 
@@ -37,4 +42,6 @@ class ConstraintInfo:
     angle: Optional[float] = None
     axis: Optional[tuple[float, float, float]] = None
     origin: Optional[tuple[float, float, float]] = None
+    origin_two: Optional[tuple[float, float, float]] = None
+    origin_source: str = "OriginOne"
     limits: Optional[tuple[float, float]] = None
