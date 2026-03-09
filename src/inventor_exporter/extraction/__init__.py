@@ -24,6 +24,10 @@ from inventor_exporter.extraction.assembly import (
     OccurrenceData,
     extract_transform,
     traverse_assembly,
+    traverse_assembly_recursive,
+)
+from inventor_exporter.extraction.constraints import (
+    extract_constraints_and_joints,
 )
 from inventor_exporter.extraction.geometry import (
     AP203,
@@ -40,7 +44,9 @@ from inventor_exporter.extraction.client import InventorClient
 __all__ = [
     "InventorClient",
     "traverse_assembly",
+    "traverse_assembly_recursive",
     "extract_transform",
+    "extract_constraints_and_joints",
     "OccurrenceData",
     "export_step",
     "export_unique_parts",

@@ -4,7 +4,7 @@ Reads material name and density from the ActiveMaterial's PhysicalPropertiesAsse
 Handles localization issues by searching for partial property name matches.
 
 Units:
-- Inventor density: kg/cm^3
+- Inventor structural_Density: already in kg/m^3
 - Output density: kg/m^3 (SI standard)
 """
 
@@ -17,13 +17,6 @@ from inventor_exporter.core.com import late_bind
 from inventor_exporter.model import Material
 
 logger = logging.getLogger(__name__)
-
-# Density conversion: kg/cm^3 to kg/m^3
-# 1 kg/cm^3 = 1,000,000 kg/m^3
-CM3_TO_M3 = 1_000_000
-
-# Default density (steel) in kg/m^3 for fallback
-DEFAULT_DENSITY = 7800.0
 
 
 def _get_asset_value(prop: Any) -> Optional[float]:
@@ -104,11 +97,10 @@ def extract_material(part_doc: Any) -> Optional[Material]:
     # Get physical properties asset (also use late binding)
     phys_props = late_bind(material.PhysicalPropertiesAsset)
     if phys_props is None:
-        logger.warning(
-            f"Material '{material_name}' has no PhysicalPropertiesAsset, "
-            f"using default density {DEFAULT_DENSITY} kg/m^3"
+        logger.debug(
+            f"Material '{material_name}' has no PhysicalPropertiesAsset"
         )
-        return Material(name=material_name, density=DEFAULT_DENSITY)
+        return Material(name=material_name)
 
     # Search for density property (handles localization)
     density_kg_m3: Optional[float] = None
@@ -118,23 +110,22 @@ def extract_material(part_doc: Any) -> Optional[Material]:
 
         # Check for density-related property names
         if "density" in prop_name or "dichte" in prop_name:
-            density_kg_cm3 = _get_asset_value(prop)
-            if density_kg_cm3 is None:
+            density_kg_m3 = _get_asset_value(prop)
+            if density_kg_m3 is None:
                 logger.warning(f"Could not read density value from '{prop.Name}'")
                 continue
 
-            density_kg_m3 = density_kg_cm3 * CM3_TO_M3
+            # Inventor's structural_Density is already in kg/m^3
             logger.debug(
                 f"Found density property '{prop.Name}': "
-                f"{density_kg_cm3} kg/cm^3 = {density_kg_m3} kg/m^3"
+                f"{density_kg_m3} kg/m^3"
             )
             break
 
     if density_kg_m3 is None:
-        logger.warning(
-            f"Density property not found for material '{material_name}', "
-            f"using default density {DEFAULT_DENSITY} kg/m^3"
+        logger.debug(
+            f"Density property not found for material '{material_name}'"
         )
-        return Material(name=material_name, density=DEFAULT_DENSITY)
+        return Material(name=material_name)
 
     return Material(name=material_name, density=density_kg_m3)

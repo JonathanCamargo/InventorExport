@@ -16,6 +16,7 @@ from inventor_exporter.model.transform import Transform
 from inventor_exporter.model.material import Material
 from inventor_exporter.model.inertia import Inertia
 from inventor_exporter.model.body import Body
+from inventor_exporter.model.constraint import ConstraintInfo
 from inventor_exporter.model.assembly import AssemblyModel
 
 __all__ = [
@@ -23,5 +24,6 @@ __all__ = [
     "Material",
     "Inertia",
     "Body",
+    "ConstraintInfo",
     "AssemblyModel",
 ]

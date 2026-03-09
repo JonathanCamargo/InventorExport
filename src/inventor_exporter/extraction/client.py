@@ -20,11 +20,15 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 from inventor_exporter.core.com import inventor_app, active_assembly
-from inventor_exporter.extraction.assembly import traverse_assembly
+from inventor_exporter.extraction.assembly import (
+    traverse_assembly,
+    traverse_assembly_recursive,
+)
+from inventor_exporter.extraction.constraints import extract_constraints_and_joints
 from inventor_exporter.extraction.geometry import export_unique_parts
 from inventor_exporter.extraction.material import extract_material
 from inventor_exporter.extraction.mass import extract_mass_properties
-from inventor_exporter.model import AssemblyModel, Body, Material
+from inventor_exporter.model import AssemblyModel, Body, ConstraintInfo, Material
 
 
 logger = logging.getLogger(__name__)
@@ -110,8 +114,15 @@ class InventorClient:
         self.logger.info(f"Extracting assembly: {assembly_name}")
 
         # Step 1: Traverse assembly to get all leaf occurrences
-        self.logger.info("Traversing assembly...")
-        occurrences = traverse_assembly(doc)
+        # Try recursive traversal first (handles nested subassemblies);
+        # fall back to AllLeafOccurrences if recursion finds nothing.
+        self.logger.info("Traversing assembly (recursive)...")
+        occurrences = traverse_assembly_recursive(doc)
+        if not occurrences:
+            self.logger.info(
+                "Recursive traversal found nothing, trying AllLeafOccurrences..."
+            )
+            occurrences = traverse_assembly(doc)
         self.logger.info(f"Found {len(occurrences)} leaf occurrences")
 
         if not occurrences:
@@ -161,14 +172,27 @@ class InventorClient:
 
         self.logger.info(f"Built {len(bodies)}/{total} bodies")
 
-        # Step 5: Build AssemblyModel
+        # Step 5: Extract constraints and joints
+        self.logger.info("Extracting constraints and joints...")
+        asm_def = doc.ComponentDefinition
+        constraint_infos: list[ConstraintInfo] = []
+        try:
+            constraint_infos = extract_constraints_and_joints(asm_def)
+            self.logger.info(
+                f"Extracted {len(constraint_infos)} constraints/joints"
+            )
+        except Exception as e:
+            self.logger.warning(f"Failed to extract constraints: {e}")
+
+        # Step 6: Build AssemblyModel
         model = AssemblyModel(
             name=assembly_name,
             bodies=tuple(bodies),
             materials=materials,
+            constraints=tuple(constraint_infos),
         )
 
-        # Step 6: Validate and return
+        # Step 7: Validate and return
         errors = model.validate()
         if errors:
             for error in errors:

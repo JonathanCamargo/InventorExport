@@ -6,7 +6,6 @@ Output matches VBA implementation (Inventor2AdamsView.ivb).
 Coordinate conventions:
     - Position: millimeters (converted from IR meters)
     - Rotation: ZXZ Euler angles in degrees
-    - Density: kg/mm^3 (converted from IR kg/m^3)
     - Inertia: kg*mm^2 (converted from IR kg*m^2)
 
 Output structure:
@@ -110,12 +109,10 @@ class AdamsWriter:
         return output.getvalue()
 
     def _generate_material(self, material: Material, model_name: str) -> str:
-        """Generate material create command.
-
-        Converts density from kg/m^3 to kg/mm^3 for ADAMS.
-        """
-        # kg/m^3 * 1e-9 = kg/mm^3
-        density_kg_mm3 = material.density * 1e-9
+        """Generate material create command."""
+        # kg/m^3 * 1e-9 = kg/mm^3; default to steel if not available
+        density_kg_m3 = material.density if material.density else 7800.0
+        density_kg_mm3 = density_kg_m3 * 1e-9
 
         # Use defaults if not specified (matching VBA behavior)
         youngs = material.youngs_modulus if material.youngs_modulus else 207000.0

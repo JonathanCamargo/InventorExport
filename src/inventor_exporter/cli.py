@@ -95,6 +95,12 @@ def main(format: str, output: str, verbose: bool, debug_transforms: bool):
 
         # Show extraction summary
         click.echo(f"  Found {len(model.bodies)} bodies, {len(model.materials)} materials")
+        if model.constraints:
+            click.echo(f"  Found {len(model.constraints)} constraints/joints")
+            rigid = model.rigid_groups()
+            n_groups = sum(1 for members in rigid.values() if len(members) > 1)
+            if n_groups:
+                click.echo(f"  Identified {n_groups} rigid group(s)")
 
         # Show geometry files
         geometry_files = [b.geometry_file for b in model.bodies if b.geometry_file is not None]

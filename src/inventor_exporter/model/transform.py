@@ -66,3 +66,16 @@ class Transform:
             raise ValueError(
                 f"rotation must be shape (3, 3), got {self.rotation.shape}"
             )
+
+    def relative_to(self, parent: "Transform") -> "Transform":
+        """Compute this transform expressed in a parent frame.
+
+        Args:
+            parent: The parent transform.
+
+        Returns:
+            New Transform with position and rotation relative to *parent*.
+        """
+        rel_pos = parent.rotation.T @ (self.position - parent.position)
+        rel_rot = parent.rotation.T @ self.rotation
+        return Transform(position=rel_pos, rotation=rel_rot)

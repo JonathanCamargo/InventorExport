@@ -1,26 +1,15 @@
 """SDF (Simulation Description Format) writer for Gazebo.
 
 Generates SDF 1.8 XML files compatible with Gazebo simulator.
-SDF is the native format for Gazebo and extends URDF capabilities.
 
 Coordinate conventions:
-    - Position: meters (same as IR, no conversion needed)
-    - Rotation: RPY angles in radians (roll-pitch-yaw, same as URDF)
+    - Position: meters (same as IR)
+    - Rotation: RPY angles in radians
     - Mesh files: STL, referenced via URI elements
 
-Output structure:
-    1. SDF root element with version="1.8"
-    2. Model element containing all links and joints
-    3. Virtual base_link at world origin
-    4. Physical links with pose, inertial, visual, collision
-    5. Fixed joints connecting each link to base_link
-
-Key differences from URDF:
-    - Root element is <sdf version="1.8"> containing <model>
-    - Pose uses single <pose> element with 6 space-separated values
-    - Inertia elements are nested separately, not as attributes
-    - Mesh uses <uri> child element instead of filename attribute
-    - Visual/collision have name attribute
+Structure:
+    - Rigid groups: merged into single links with multiple visuals.
+    - Constraint/joint metadata emitted as XML comments.
 """
 
 import logging
@@ -36,52 +25,34 @@ from inventor_exporter.writers.registry import WriterRegistry
 logger = logging.getLogger(__name__)
 
 
+def _format_pose(position, rotation) -> str:
+    rpy = rotation_to_euler(rotation, EulerConvention.URDF_RPY, degrees=False)
+    return (
+        f"{position[0]} {position[1]} {position[2]} "
+        f"{rpy[0]} {rpy[1]} {rpy[2]}"
+    )
+
+
 @WriterRegistry.register("sdf")
 class SDFWriter:
-    """SDF format writer for Gazebo simulation.
-
-    Generates SDF 1.8 XML files with proper model structure,
-    mesh references, and inertial properties.
-
-    Attributes:
-        format_name: "sdf"
-        file_extension: ".sdf"
-    """
+    """SDF format writer with rigid-group merging and constraint metadata."""
 
     format_name: str = "sdf"
     file_extension: str = ".sdf"
 
     def write(self, model: AssemblyModel, output_path: Path) -> None:
-        """Write assembly model to SDF file.
-
-        Creates:
-            - {output_path}: SDF XML file
-            - {output_path.parent}/meshes/: Directory with STL mesh files
-
-        Args:
-            model: AssemblyModel to export.
-            output_path: Destination .sdf file path.
-
-        Raises:
-            ValueError: If model validation fails.
-        """
         errors = model.validate()
         if errors:
             raise ValueError(
                 "Model validation failed:\n" + "\n".join(f"  - {e}" for e in errors)
             )
 
-        # Set up mesh converter for STEP -> STL conversion
         output_dir = output_path.parent
         mesh_converter = MeshConverter(output_dir, mesh_subdir="meshes")
-
-        # Convert meshes for bodies with geometry
         self._convert_meshes(model, mesh_converter)
 
-        # Build XML tree
         root = self._build_sdf_tree(model, mesh_converter)
 
-        # Write with pretty printing
         tree = etree.ElementTree(root)
         tree.write(
             str(output_path),
@@ -89,55 +60,90 @@ class SDFWriter:
             xml_declaration=True,
             encoding="utf-8",
         )
-
         logger.info("Wrote SDF file: %s", output_path)
 
     def _convert_meshes(
         self, model: AssemblyModel, converter: MeshConverter
     ) -> None:
-        """Convert STEP geometry files to STL meshes.
-
-        Args:
-            model: AssemblyModel containing bodies with geometry.
-            converter: MeshConverter instance for conversion.
-        """
         for body in model.bodies:
             if body.geometry_file and body.geometry_file.exists():
                 try:
                     converter.convert(body.geometry_file, body.name)
-                    logger.debug("Converted mesh for %s", body.name)
                 except Exception as e:
-                    logger.warning(
-                        "Failed to convert mesh for %s: %s", body.name, e
-                    )
+                    logger.warning("Failed to convert mesh for %s: %s", body.name, e)
 
     def _build_sdf_tree(
         self, model: AssemblyModel, mesh_converter: MeshConverter
     ) -> etree._Element:
-        """Build complete SDF XML tree.
-
-        Args:
-            model: AssemblyModel to convert.
-            mesh_converter: MeshConverter for mesh path lookup.
-
-        Returns:
-            Root <sdf> element.
-        """
-        # Root SDF element with version
         sdf = etree.Element("sdf", version="1.8")
-
-        # Model element
         model_elem = etree.SubElement(sdf, "model", name=model.name)
 
-        # Virtual base_link at world origin (no geometry)
+        # Constraint / joint metadata
+        if model.constraints:
+            self._add_constraint_comments(model_elem, model)
+
+        # Base link
         etree.SubElement(model_elem, "link", name="base_link")
 
-        # Add each body as a link with fixed joint
+        # Links and joints — rigid-group aware
+        groups = model.rigid_groups()
+        emitted: set[str] = set()
+        link_names: list[tuple[str, Body]] = []
+
+        for rep, members in groups.items():
+            if len(members) == 1:
+                body = model.get_body(members[0])
+                if body is not None:
+                    self._add_link(model_elem, body, mesh_converter)
+                    link_names.append((body.name, body))
+            else:
+                name, primary = self._add_rigid_group_link(
+                    model_elem, members, model, mesh_converter
+                )
+                if primary is not None:
+                    link_names.append((name, primary))
+            emitted.update(members)
+
         for body in model.bodies:
-            self._add_link(model_elem, body, mesh_converter)
-            self._add_joint(model_elem, body)
+            if body.name not in emitted:
+                self._add_link(model_elem, body, mesh_converter)
+                link_names.append((body.name, body))
+
+        # Fixed joints
+        for lname, primary in link_names:
+            self._add_joint(model_elem, lname)
 
         return sdf
+
+    # ------------------------------------------------------------------
+    # Constraint comments
+    # ------------------------------------------------------------------
+
+    def _add_constraint_comments(
+        self, parent: etree._Element, model: AssemblyModel
+    ) -> None:
+        lines = [" Assembly constraints and joints:"]
+        for c in model.constraints:
+            parts = [f"  {c.type}: {c.occurrence_one} <-> {c.occurrence_two}"]
+            if c.name:
+                parts.append(f"name={c.name}")
+            if c.offset is not None:
+                parts.append(f"offset={c.offset:.4f}m")
+            if c.axis is not None:
+                parts.append(f"axis=({c.axis[0]:.3f},{c.axis[1]:.3f},{c.axis[2]:.3f})")
+            if c.origin is not None:
+                parts.append(
+                    f"origin=({c.origin[0]:.4f},{c.origin[1]:.4f},{c.origin[2]:.4f})m"
+                )
+            if c.is_rigid:
+                parts.append("[RIGID]")
+            lines.append(", ".join(parts))
+        lines.append("")
+        parent.append(etree.Comment("\n".join(lines)))
+
+    # ------------------------------------------------------------------
+    # Single link
+    # ------------------------------------------------------------------
 
     def _add_link(
         self,
@@ -145,130 +151,135 @@ class SDFWriter:
         body: Body,
         mesh_converter: MeshConverter,
     ) -> None:
-        """Add link element for a body.
-
-        Args:
-            parent: Parent model element.
-            body: Body to add.
-            mesh_converter: MeshConverter for mesh paths.
-        """
         link = etree.SubElement(parent, "link", name=body.name)
 
-        # Pose relative to base_link: x y z roll pitch yaw
-        pose_str = self._format_pose(body)
         pose = etree.SubElement(link, "pose", relative_to="base_link")
-        pose.text = pose_str
+        pose.text = _format_pose(body.transform.position, body.transform.rotation)
 
-        # Inertial element (if inertia present)
         if body.inertia is not None:
             self._add_inertial(link, body)
 
-        # Visual element (if geometry present)
         if body.geometry_file is not None:
             mesh_path = mesh_converter.get_mesh_path(body.name)
-            self._add_visual(link, body.name, mesh_path)
-            self._add_collision(link, body.name, mesh_path)
+            self._add_visual(link, mesh_path)
+            self._add_collision(link, mesh_path)
 
-    def _format_pose(self, body: Body) -> str:
-        """Format pose as SDF pose string.
+    # ------------------------------------------------------------------
+    # Rigid group link
+    # ------------------------------------------------------------------
 
-        Args:
-            body: Body with transform.
+    def _add_rigid_group_link(
+        self,
+        parent: etree._Element,
+        member_names: list[str],
+        model: AssemblyModel,
+        mesh_converter: MeshConverter,
+    ) -> "tuple[str, Body | None]":
+        primary = model.get_body(member_names[0])
+        if primary is None:
+            return member_names[0], None
 
-        Returns:
-            String with "x y z roll pitch yaw" (meters, radians).
-        """
-        pos = body.transform.position
-        rpy = rotation_to_euler(
-            body.transform.rotation, EulerConvention.URDF_RPY, degrees=False
+        group_name = "_".join(member_names[:2]) + "_group"
+        link = etree.SubElement(parent, "link", name=group_name)
+        link.append(etree.Comment(f" Rigid group: {', '.join(member_names)} "))
+
+        pose = etree.SubElement(link, "pose", relative_to="base_link")
+        pose.text = _format_pose(
+            primary.transform.position, primary.transform.rotation
         )
-        return f"{pos[0]} {pos[1]} {pos[2]} {rpy[0]} {rpy[1]} {rpy[2]}"
+
+        # Simplified inertial
+        total_mass = 0.0
+        for bname in member_names:
+            b = model.get_body(bname)
+            if b is not None and b.inertia is not None:
+                total_mass += b.inertia.mass
+
+        if total_mass > 0:
+            inertial = etree.SubElement(link, "inertial")
+            mass_el = etree.SubElement(inertial, "mass")
+            mass_el.text = f"{total_mass:.6g}"
+
+        # Visual + collision per member
+        for bname in member_names:
+            b = model.get_body(bname)
+            if b is None or b.geometry_file is None:
+                continue
+
+            mesh_path = mesh_converter.get_mesh_path(bname)
+            rel = b.transform.relative_to(primary.transform)
+
+            # Visual
+            visual = etree.SubElement(link, "visual", name=f"{bname}_visual")
+            vpose = etree.SubElement(visual, "pose")
+            vpose.text = _format_pose(rel.position, rel.rotation)
+            geom = etree.SubElement(visual, "geometry")
+            mesh = etree.SubElement(geom, "mesh")
+            uri = etree.SubElement(mesh, "uri")
+            uri.text = str(mesh_path).replace("\\", "/")
+            scale = etree.SubElement(mesh, "scale")
+            scale.text = "0.001 0.001 0.001"
+
+            # Collision
+            collision = etree.SubElement(link, "collision", name=f"{bname}_collision")
+            cpose = etree.SubElement(collision, "pose")
+            cpose.text = _format_pose(rel.position, rel.rotation)
+            geom = etree.SubElement(collision, "geometry")
+            mesh = etree.SubElement(geom, "mesh")
+            uri = etree.SubElement(mesh, "uri")
+            uri.text = str(mesh_path).replace("\\", "/")
+            scale = etree.SubElement(mesh, "scale")
+            scale.text = "0.001 0.001 0.001"
+
+        return group_name, primary
+
+    # ------------------------------------------------------------------
+    # Helpers
+    # ------------------------------------------------------------------
 
     def _add_inertial(self, link: etree._Element, body: Body) -> None:
-        """Add inertial element to link.
-
-        Args:
-            link: Parent link element.
-            body: Body with inertia data.
-        """
         inertia = body.inertia
         inertial = etree.SubElement(link, "inertial")
 
-        # Mass
-        mass = etree.SubElement(inertial, "mass")
-        mass.text = str(inertia.mass)
+        mass_el = etree.SubElement(inertial, "mass")
+        mass_el.text = str(inertia.mass)
 
-        # Inertia tensor (at CoM, in body frame)
         I = inertia.inertia_tensor
         inertia_elem = etree.SubElement(inertial, "inertia")
-
-        ixx = etree.SubElement(inertia_elem, "ixx")
-        ixx.text = str(I[0, 0])
-        ixy = etree.SubElement(inertia_elem, "ixy")
-        ixy.text = str(I[0, 1])
-        ixz = etree.SubElement(inertia_elem, "ixz")
-        ixz.text = str(I[0, 2])
-        iyy = etree.SubElement(inertia_elem, "iyy")
-        iyy.text = str(I[1, 1])
-        iyz = etree.SubElement(inertia_elem, "iyz")
-        iyz.text = str(I[1, 2])
-        izz = etree.SubElement(inertia_elem, "izz")
-        izz.text = str(I[2, 2])
+        for tag, val in [
+            ("ixx", I[0, 0]), ("ixy", I[0, 1]), ("ixz", I[0, 2]),
+            ("iyy", I[1, 1]), ("iyz", I[1, 2]), ("izz", I[2, 2]),
+        ]:
+            el = etree.SubElement(inertia_elem, tag)
+            el.text = str(val)
 
     def _add_visual(
-        self, link: etree._Element, name: str, mesh_path: Path
+        self, link: etree._Element, mesh_path: Path
     ) -> None:
-        """Add visual element to link.
-
-        Args:
-            link: Parent link element.
-            name: Visual name (same as link name).
-            mesh_path: Relative path to mesh file.
-        """
         visual = etree.SubElement(link, "visual", name="visual")
         geometry = etree.SubElement(visual, "geometry")
         mesh = etree.SubElement(geometry, "mesh")
         uri = etree.SubElement(mesh, "uri")
-        # Use forward slashes for URI path (cross-platform)
         uri.text = str(mesh_path).replace("\\", "/")
-        # OCCT normalizes STEP geometry to mm; SDF expects meters.
         scale = etree.SubElement(mesh, "scale")
         scale.text = "0.001 0.001 0.001"
 
     def _add_collision(
-        self, link: etree._Element, name: str, mesh_path: Path
+        self, link: etree._Element, mesh_path: Path
     ) -> None:
-        """Add collision element to link.
-
-        Collision geometry matches visual geometry per CONTEXT.md.
-
-        Args:
-            link: Parent link element.
-            name: Collision name (same as link name).
-            mesh_path: Relative path to mesh file.
-        """
         collision = etree.SubElement(link, "collision", name="collision")
         geometry = etree.SubElement(collision, "geometry")
         mesh = etree.SubElement(geometry, "mesh")
         uri = etree.SubElement(mesh, "uri")
-        # Use forward slashes for URI path (cross-platform)
         uri.text = str(mesh_path).replace("\\", "/")
         scale = etree.SubElement(mesh, "scale")
         scale.text = "0.001 0.001 0.001"
 
-    def _add_joint(self, parent: etree._Element, body: Body) -> None:
-        """Add fixed joint connecting link to base_link.
-
-        Args:
-            parent: Parent model element.
-            body: Body being connected.
-        """
+    def _add_joint(self, parent: etree._Element, link_name: str) -> None:
         joint = etree.SubElement(
-            parent, "joint", name=f"{body.name}_joint", type="fixed"
+            parent, "joint", name=f"{link_name}_joint", type="fixed"
         )
-
         parent_link = etree.SubElement(joint, "parent")
         parent_link.text = "base_link"
-
         child_link = etree.SubElement(joint, "child")
-        child_link.text = body.name
+        child_link.text = link_name

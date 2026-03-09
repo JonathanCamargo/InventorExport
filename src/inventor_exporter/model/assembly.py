@@ -14,6 +14,7 @@ from typing import Optional
 import numpy as np
 
 from inventor_exporter.model.body import Body
+from inventor_exporter.model.constraint import ConstraintInfo
 from inventor_exporter.model.material import Material
 
 
@@ -44,6 +45,7 @@ class AssemblyModel:
     name: str
     bodies: tuple[Body, ...] = field(default_factory=tuple)
     materials: tuple[Material, ...] = field(default_factory=tuple)
+    constraints: tuple[ConstraintInfo, ...] = field(default_factory=tuple)
     ground_body: str = "ground"
 
     def get_body(self, name: str) -> Optional[Body]:
@@ -73,6 +75,46 @@ class AssemblyModel:
             if material.name == name:
                 return material
         return None
+
+    def rigid_groups(self) -> dict[str, list[str]]:
+        """Compute groups of bodies rigidly connected by constraints/joints.
+
+        Uses Union-Find over rigid constraints. Constraint occurrence names
+        are sanitized the same way as Body.name (colons/spaces to underscores).
+
+        Returns:
+            Dict mapping group representative name to list of body names.
+            Every body appears in exactly one group; unconstrained bodies
+            are in single-element groups.
+        """
+        body_names = [b.name for b in self.bodies]
+        parent = {n: n for n in body_names}
+
+        def find(x: str) -> str:
+            while parent[x] != x:
+                parent[x] = parent[parent[x]]
+                x = parent[x]
+            return x
+
+        def union(a: str, b: str) -> None:
+            ra, rb = find(a), find(b)
+            if ra != rb:
+                parent[ra] = rb
+
+        body_name_set = set(body_names)
+        for c in self.constraints:
+            if not c.is_rigid:
+                continue
+            n1 = c.occurrence_one.replace(":", "_").replace(" ", "_")
+            n2 = c.occurrence_two.replace(":", "_").replace(" ", "_")
+            if n1 in body_name_set and n2 in body_name_set:
+                union(n1, n2)
+
+        groups: dict[str, list[str]] = {}
+        for name in body_names:
+            root = find(name)
+            groups.setdefault(root, []).append(name)
+        return groups
 
     def validate(self) -> list[str]:
         """Validate the assembly model.
