@@ -114,12 +114,13 @@ class URDFWriter:
             self._add_material(robot, material)
 
         # Build kinematic tree
+        groups = model.rigid_groups()
         ktree = classify_joints(
             [b.name for b in model.bodies],
             model.constraints,
             ground=model.ground_body,
+            rigid_groups=groups,
         )
-        groups = model.rigid_groups()
 
         # Base link
         robot.append(etree.Comment(" === Base Link (world origin) === "))

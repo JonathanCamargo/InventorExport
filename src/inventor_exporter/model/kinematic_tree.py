@@ -27,6 +27,15 @@ KINEMATIC_JOINT_TYPES = {
     "ball_joint",
 }
 
+# Constraint types that can close kinematic loops (but don't define
+# parent-child relationships in the spanning tree).
+LOOP_CLOSING_CONSTRAINT_TYPES = {
+    "mate",
+    "flush",
+    "mate_or_flush",
+    "insert",
+}
+
 
 def _sanitize(name: str) -> str:
     """Sanitize occurrence name to match body names."""
@@ -78,6 +87,7 @@ def classify_joints(
     body_names: list[str],
     constraints: "tuple[ConstraintInfo, ...] | list[ConstraintInfo]",
     ground: str = "",
+    rigid_groups: "dict[str, list[str]] | None" = None,
 ) -> KinematicTree:
     """Build spanning tree from joints, identify loop-closing cut joints.
 
@@ -85,42 +95,62 @@ def classify_joints(
     graph.  Joints not in the spanning tree are classified as *cut joints*
     (they close kinematic loops).
 
+    When ``rigid_groups`` is provided, bodies in the same rigid group are
+    treated as a single node so that the BFS can traverse through rigidly
+    connected components.
+
     Args:
         body_names: All body names in the assembly.
         constraints: All constraints/joints from the assembly.
         ground: Optional ground/fixed body name.  If found in the graph,
             used as BFS root.  Otherwise picks the most-connected body.
+        rigid_groups: Dict mapping representative body name to list of
+            member body names (from ``AssemblyModel.rigid_groups()``).
+            If None, each body is its own group.
 
     Returns:
         KinematicTree with spanning tree and cut joints separated.
     """
     body_set = set(body_names)
 
-    # Collect kinematic (non-rigid) joints with valid body references
+    # Build body → rigid group representative mapping
+    body_to_rep: dict[str, str] = {}
+    if rigid_groups:
+        for rep, members in rigid_groups.items():
+            for m in members:
+                body_to_rep[m] = rep
+
+    def to_rep(name: str) -> str:
+        return body_to_rep.get(name, name)
+
+    # Collect kinematic (non-rigid) joints with valid body references.
+    # Map occurrence names to rigid group representatives so that joints
+    # between different members of separate groups are correctly connected.
     kinematic_joints: list[ConstraintInfo] = []
     for c in constraints:
         if c.is_rigid or c.type not in KINEMATIC_JOINT_TYPES:
             continue
-        a = _sanitize(c.occurrence_one)
-        b = _sanitize(c.occurrence_two)
+        a = to_rep(_sanitize(c.occurrence_one))
+        b = to_rep(_sanitize(c.occurrence_two))
         if a in body_set and b in body_set and a != b:
             kinematic_joints.append(c)
 
     if not kinematic_joints:
         return KinematicTree(root_bodies=list(body_names))
 
-    # Build undirected adjacency list
+    # Build undirected adjacency list using representative names
     adj: dict[str, list[tuple[str, ConstraintInfo]]] = defaultdict(list)
     for c in kinematic_joints:
-        a = _sanitize(c.occurrence_one)
-        b = _sanitize(c.occurrence_two)
+        a = to_rep(_sanitize(c.occurrence_one))
+        b = to_rep(_sanitize(c.occurrence_two))
         adj[a].append((b, c))
         adj[b].append((a, c))
 
-    # Pick root: prefer ground body, then most-connected body
+    # Pick root: prefer ground body (mapped to rep), then most-connected
     connected_bodies = set(adj.keys())
-    if ground and ground in connected_bodies:
-        root = ground
+    ground_rep = to_rep(ground) if ground else ""
+    if ground_rep and ground_rep in connected_bodies:
+        root = ground_rep
     else:
         root = max(connected_bodies, key=lambda n: len(adj[n]))
 
@@ -150,13 +180,31 @@ def classify_joints(
             # Check if parent/child roles are flipped from Inventor's default.
             # Default assumption: occurrence_one = child, occurrence_two = parent.
             # Tree says: neighbor = child.
-            occ_one_sanitized = _sanitize(constraint.occurrence_one)
-            if occ_one_sanitized != neighbor:
-                # occurrence_one is the parent, not child -> roles flipped
+            # Map occurrence_one to its rep to compare correctly when the
+            # joint references a body that was merged into a rigid group.
+            occ_one_rep = to_rep(_sanitize(constraint.occurrence_one))
+            if occ_one_rep != neighbor:
+                # occurrence_one (or its group) is the parent -> roles flipped
                 flipped.add(neighbor)
 
     # Cut joints: kinematic joints not used in spanning tree
     cut_joints = [c for c in kinematic_joints if id(c) not in used_joints]
+
+    # Detect non-kinematic constraints that close loops (e.g. mates that
+    # pin two arms together at the coupler point of a 5-bar linkage).
+    for c in constraints:
+        if c.is_rigid or c.type in KINEMATIC_JOINT_TYPES:
+            continue
+        if c.type not in LOOP_CLOSING_CONSTRAINT_TYPES:
+            continue
+        a = to_rep(_sanitize(c.occurrence_one))
+        b = to_rep(_sanitize(c.occurrence_two))
+        if a in visited and b in visited and a != b:
+            cut_joints.append(c)
+            logger.info(
+                "Constraint '%s' (%s) between %s and %s closes a loop",
+                c.name, c.type, a, b,
+            )
 
     # Root bodies: all bodies not assigned a parent
     root_bodies = [name for name in body_names if name not in parent_of]

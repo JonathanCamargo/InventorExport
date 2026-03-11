@@ -10,6 +10,7 @@ All property access uses try/except for robustness with late-binding COM.
 import logging
 from typing import List, Optional, Tuple
 
+import numpy as np
 import pythoncom
 import win32com.client.dynamic
 
@@ -132,6 +133,22 @@ def _extract_constraint(constraint) -> "ConstraintInfo | None":
     offset = _read_offset(constraint)
     angle = _read_angle(constraint)
 
+    # --- Extract face geometry for mate/flush constraints ---
+    # These constraints reference planar faces; extract a representative
+    # point so that the writer can place loop-closure anchors accurately
+    # instead of relying on CoM-based heuristics.
+    origin = None
+    origin_two = None
+    origin_source = "OriginOne"
+
+    if constraint_type in ("mate", "flush", "mate_or_flush", "insert"):
+        origin, origin_two = _extract_constraint_face_points(constraint)
+        if origin is not None:
+            logger.debug(
+                "Constraint '%s': extracted face point origin=%s, origin_two=%s",
+                name, origin, origin_two,
+            )
+
     logger.debug(
         "Constraint: %s (%s) %s <-> %s", name, constraint_type, occ_one, occ_two
     )
@@ -144,7 +161,120 @@ def _extract_constraint(constraint) -> "ConstraintInfo | None":
         name=name,
         offset=offset,
         angle=angle,
+        origin=origin,
+        origin_two=origin_two,
+        origin_source=origin_source,
     )
+
+
+def _extract_face_point_local(entity) -> "tuple[float, float, float] | None":
+    """Get a representative point from a constraint face entity, in occurrence-local coords.
+
+    Tries PointOnFace first (returns a point on the face in assembly world
+    coordinates), then falls back to Geometry.RootPoint.  The world-frame
+    point is transformed to the containing occurrence's local (part) frame
+    so it matches the convention used by joint origins.
+    """
+    try:
+        face = late_bind(entity)
+    except Exception:
+        return None
+
+    world_pt = None
+
+    # Approach 1: PointOnFace — available on most Face/FaceProxy objects
+    try:
+        pt = face.PointOnFace
+        world_pt = np.array([
+            InventorUnits.length_to_meters(pt.X),
+            InventorUnits.length_to_meters(pt.Y),
+            InventorUnits.length_to_meters(pt.Z),
+        ])
+    except Exception:
+        pass
+
+    # Approach 2: Geometry.RootPoint (planar faces → Plane.RootPoint)
+    if world_pt is None:
+        try:
+            geom = late_bind(face.Geometry)
+            rp = geom.RootPoint
+            world_pt = np.array([
+                InventorUnits.length_to_meters(rp.X),
+                InventorUnits.length_to_meters(rp.Y),
+                InventorUnits.length_to_meters(rp.Z),
+            ])
+        except Exception:
+            pass
+
+    # Approach 3: face evaluator mid-parameter point
+    if world_pt is None:
+        try:
+            evaluator = late_bind(face.Evaluator)
+            param_range = evaluator.ParamRangeRect
+            min_pt = param_range.MinPoint
+            max_pt = param_range.MaxPoint
+            mid_u = (min_pt.X + max_pt.X) / 2.0
+            mid_v = (min_pt.Y + max_pt.Y) / 2.0
+            pt = evaluator.GetPointAtParam(mid_u, mid_v)
+            world_pt = np.array([
+                InventorUnits.length_to_meters(pt.X),
+                InventorUnits.length_to_meters(pt.Y),
+                InventorUnits.length_to_meters(pt.Z),
+            ])
+        except Exception:
+            pass
+
+    if world_pt is None:
+        return None
+
+    # Transform world → occurrence-local using the occurrence's 4×4 matrix
+    try:
+        occ = entity.ContainingOccurrence
+        matrix = occ.Transformation
+        R = np.array([
+            [matrix.Cell(1, 1), matrix.Cell(1, 2), matrix.Cell(1, 3)],
+            [matrix.Cell(2, 1), matrix.Cell(2, 2), matrix.Cell(2, 3)],
+            [matrix.Cell(3, 1), matrix.Cell(3, 2), matrix.Cell(3, 3)],
+        ])
+        t = np.array([
+            InventorUnits.length_to_meters(matrix.Cell(1, 4)),
+            InventorUnits.length_to_meters(matrix.Cell(2, 4)),
+            InventorUnits.length_to_meters(matrix.Cell(3, 4)),
+        ])
+        local_pt = R.T @ (world_pt - t)
+        return tuple(local_pt)
+    except Exception as e:
+        logger.debug("Could not transform face point to local: %s", e)
+        return None
+
+
+def _extract_constraint_face_points(
+    constraint,
+) -> "tuple[tuple[float,float,float]|None, tuple[float,float,float]|None]":
+    """Extract representative face points from both entities of a mate/flush constraint.
+
+    Returns (origin, origin_two) in each occurrence's local frame, matching
+    the convention of joint OriginOne / OriginTwo.
+    """
+    origin = None
+    origin_two = None
+
+    try:
+        origin = _extract_face_point_local(constraint.EntityOne)
+    except Exception:
+        pass
+
+    try:
+        origin_two = _extract_face_point_local(constraint.EntityTwo)
+    except Exception:
+        pass
+
+    # If only EntityTwo succeeded, promote to origin
+    if origin is None and origin_two is not None:
+        origin = origin_two
+        origin_two = None
+
+    return origin, origin_two
 
 
 def _detect_constraint_type(constraint) -> str:

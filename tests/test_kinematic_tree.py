@@ -219,6 +219,139 @@ class TestGetJointOriginInChildFrame:
         assert result == (1.0, 2.0, 3.0)
 
 
+class TestClassifyJointsRigidGroups:
+    """Tests for rigid-group-aware kinematic tree construction."""
+
+    def test_five_bar_with_rigid_ground(self):
+        """5-bar linkage: ground is a rigid group of 3 bodies.
+
+        Topology (after rigid group merging):
+            ground --R1-- arm1 --R4-- arm3
+              |                        |
+              R2                    Mate:1 (loop closure)
+              |                        |
+            arm2 ----R3---- arm4 ------+
+        """
+        bodies = ["case", "servo1", "servo2", "arm1", "arm2", "arm3", "arm4"]
+        rigid_groups = {
+            "servo2": ["case", "servo1", "servo2"],  # ground group
+            "arm1": ["arm1"],
+            "arm2": ["arm2"],
+            "arm3": ["arm3"],
+            "arm4": ["arm4"],
+        }
+        constraints = [
+            # Rigid joints (within ground group)
+            _joint("rigid1", "servo2", "case", joint_type="rigid_joint", is_rigid=True),
+            _joint("rigid2", "case", "servo1", joint_type="rigid_joint", is_rigid=True),
+            # Kinematic joints
+            _joint("R1", "arm1", "servo2"),   # arm1 <-> ground via servo2
+            _joint("R2", "servo1", "arm2"),   # arm2 <-> ground via servo1
+            _joint("R3", "arm2", "arm4"),     # arm2 <-> arm4
+            _joint("R4", "arm1", "arm3"),     # arm1 <-> arm3
+            # Loop closure (mate between arm tips)
+            _joint("Mate1", "arm4", "arm3", joint_type="mate"),
+        ]
+        # ground="case" maps to rep "servo2" via rigid group
+        tree = classify_joints(
+            bodies, constraints, ground="case", rigid_groups=rigid_groups,
+        )
+
+        # All 4 rotational joints should be tree joints (not cut)
+        assert len(tree.parent_of) == 4
+        assert "arm1" in tree.parent_of
+        assert "arm2" in tree.parent_of
+        assert "arm3" in tree.parent_of
+        assert "arm4" in tree.parent_of
+
+        # Parents of arm1/arm2 should be the ground rep
+        assert tree.parent_of["arm1"] == "servo2"
+        assert tree.parent_of["arm2"] == "servo2"
+
+        # The mate should be the only cut joint (loop closure)
+        assert len(tree.cut_joints) == 1
+        assert tree.cut_joints[0].name == "Mate1"
+        assert tree.cut_joints[0].type == "mate"
+
+    def test_disconnected_without_rigid_groups(self):
+        """Without rigid_groups, separate chains appear disconnected."""
+        bodies = ["servo1", "servo2", "arm1", "arm2"]
+        constraints = [
+            _joint("R1", "arm1", "servo1"),
+            _joint("R2", "servo2", "arm2"),
+        ]
+        # No rigid groups: servo1 and servo2 are separate
+        tree = classify_joints(bodies, constraints)
+        # BFS from most-connected body visits only one component.
+        # The other component's joint becomes a cut joint — this was the bug.
+        assert len(tree.parent_of) == 1  # only one component visited
+        assert len(tree.cut_joints) == 1  # other joint misclassified
+
+    def test_connected_with_rigid_groups(self):
+        """With rigid_groups, the same chains are correctly connected."""
+        bodies = ["servo1", "servo2", "arm1", "arm2"]
+        rigid_groups = {
+            "servo1": ["servo1", "servo2"],  # same rigid group
+            "arm1": ["arm1"],
+            "arm2": ["arm2"],
+        }
+        constraints = [
+            _joint("R1", "arm1", "servo1"),
+            _joint("R2", "servo2", "arm2"),
+        ]
+        tree = classify_joints(bodies, constraints, rigid_groups=rigid_groups)
+        # Both joints should be tree joints
+        assert len(tree.parent_of) == 2
+        assert len(tree.cut_joints) == 0
+        assert "arm1" in tree.parent_of
+        assert "arm2" in tree.parent_of
+        # Both arms parent to the group representative
+        assert tree.parent_of["arm1"] == "servo1"
+        assert tree.parent_of["arm2"] == "servo1"
+
+    def test_ground_resolved_through_rigid_group(self):
+        """Ground body mapped to its rigid group representative."""
+        bodies = ["case", "servo", "arm"]
+        rigid_groups = {
+            "servo": ["case", "servo"],
+            "arm": ["arm"],
+        }
+        constraints = [
+            _joint("rigid1", "case", "servo", joint_type="rigid_joint", is_rigid=True),
+            _joint("R1", "arm", "servo"),
+        ]
+        tree = classify_joints(
+            bodies, constraints, ground="case", rigid_groups=rigid_groups,
+        )
+        # Ground "case" maps to rep "servo", which should be root
+        assert "servo" in tree.root_bodies
+        assert tree.parent_of["arm"] == "servo"
+
+    def test_mate_closes_loop_between_tree_bodies(self):
+        """A mate between two bodies already in the tree is a loop closure."""
+        bodies = ["ground", "a", "b"]
+        constraints = [
+            _joint("R1", "a", "ground"),
+            _joint("R2", "b", "ground"),
+            _joint("mate1", "a", "b", joint_type="mate"),
+        ]
+        tree = classify_joints(bodies, constraints, ground="ground")
+        assert len(tree.parent_of) == 2  # a and b are tree children
+        assert len(tree.cut_joints) == 1
+        assert tree.cut_joints[0].name == "mate1"
+        assert tree.cut_joints[0].type == "mate"
+
+    def test_mate_not_loop_if_bodies_not_connected(self):
+        """A mate between disconnected bodies is not a loop closure."""
+        bodies = ["a", "b", "c"]
+        constraints = [
+            _joint("mate1", "a", "b", joint_type="mate"),
+        ]
+        # No kinematic joints at all — no spanning tree
+        tree = classify_joints(bodies, constraints)
+        assert len(tree.cut_joints) == 0
+
+
 class TestKinematicTreeProperties:
     """Tests for KinematicTree dataclass properties."""
 

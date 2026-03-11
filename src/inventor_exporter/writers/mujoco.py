@@ -137,9 +137,21 @@ class MuJoCoWriter:
 
         etree.SubElement(mujoco, "compiler", meshdir=self._mesh_subdir)
 
-        # Disable contacts by default (adjacent bodies share joint boundaries)
+        etree.SubElement(
+            mujoco, "option",
+            gravity="0 0 -9.81", integrator="implicitfast",
+        )
+
+        # Scale joint defaults to mechanism mass — light mechanisms need
+        # low damping (velocity-dependent force overwhelms tiny inertias)
+        # and higher friction (constant drag prevents velocity runaway).
+        damping, frictionloss = self._compute_joint_defaults(model)
+
         default = etree.SubElement(mujoco, "default")
         etree.SubElement(default, "geom", contype="0", conaffinity="0")
+        etree.SubElement(
+            default, "joint", damping=damping, frictionloss=frictionloss,
+        )
 
         # Assets
         asset = etree.SubElement(mujoco, "asset")
@@ -150,13 +162,14 @@ class MuJoCoWriter:
         if model.constraints:
             self._add_constraint_comments(mujoco, model)
 
-        # Build kinematic tree with loop detection
+        # Build kinematic tree with loop detection (rigid-group-aware)
+        groups = model.rigid_groups()
         ktree = classify_joints(
             [b.name for b in model.bodies],
             model.constraints,
             ground=model.ground_body,
+            rigid_groups=groups,
         )
-        groups = model.rigid_groups()
 
         worldbody = etree.SubElement(mujoco, "worldbody")
         emitted: set[str] = set()
@@ -172,7 +185,7 @@ class MuJoCoWriter:
 
         # Equality constraints for closed-loop cut joints
         if ktree.cut_joints:
-            self._add_equality_constraints(mujoco, ktree, model)
+            self._add_equality_constraints(mujoco, ktree, model, groups)
 
         return mujoco
 
@@ -305,19 +318,25 @@ class MuJoCoWriter:
                 etree.SubElement(body_elem, "geom", **attribs)
             emitted.add(body.name)
 
-        # Recurse into children
-        for child_name in ktree.children_of.get(body.name, []):
-            if child_name in emitted:
-                continue
-            child_body = model.get_body(child_name)
-            if child_body is not None:
-                child_flipped = child_name in ktree.flipped
-                self._add_body_recursive(
-                    body_elem, child_body, body,
-                    ktree.joint_for.get(child_name),
-                    child_flipped,
-                    model, mesh_names, ktree, groups, emitted,
-                )
+        # Recurse into children.
+        # For rigid groups, the spanning tree keys children under the
+        # group representative, so check all group members for children.
+        child_lookup_names = [body.name]
+        if group_members:
+            child_lookup_names = list(group_members)
+        for lookup_name in child_lookup_names:
+            for child_name in ktree.children_of.get(lookup_name, []):
+                if child_name in emitted:
+                    continue
+                child_body = model.get_body(child_name)
+                if child_body is not None:
+                    child_flipped = child_name in ktree.flipped
+                    self._add_body_recursive(
+                        body_elem, child_body, body,
+                        ktree.joint_for.get(child_name),
+                        child_flipped,
+                        model, mesh_names, ktree, groups, emitted,
+                    )
 
     # ------------------------------------------------------------------
     # Joint element
@@ -353,6 +372,16 @@ class MuJoCoWriter:
                     _format_pos(axis_world),
                     _format_pos(axis_local),
                 )
+            elif mj_type == "hinge":
+                # No axis extracted — default to world-Z transformed to body-local.
+                # This is correct for planar mechanisms (most common case).
+                axis_local = R_inv @ np.array([0.0, 0.0, 1.0])
+                attribs["axis"] = _format_pos(axis_local)
+                logger.info(
+                    "Joint %s: no axis extracted, defaulting to world-Z -> local=(%s)",
+                    constraint.name,
+                    _format_pos(axis_local),
+                )
 
             origin = origin_override if origin_override is not None else constraint.origin
             if origin is not None:
@@ -379,43 +408,71 @@ class MuJoCoWriter:
         mujoco: etree._Element,
         ktree: KinematicTree,
         model: AssemblyModel,
+        groups: dict[str, list[str]],
     ) -> None:
         """Add <equality> section for loop-closing cut joints.
 
         Revolute cut joints use two <connect> constraints offset along
         the axis to create a hinge outside the kinematic tree.
         Other types use a single <connect> (ball joint approximation).
+
+        Body names are resolved through rigid groups: if a body was
+        merged into a rigid group, the group's XML element name is used.
         """
+        # Build body name -> MuJoCo XML body name mapping for rigid groups
+        body_to_xml: dict[str, str] = {}
+        for rep, members in groups.items():
+            if len(members) > 1:
+                xml_name = "_".join(members[:2]) + "_group"
+                for m in members:
+                    body_to_xml[m] = xml_name
+            else:
+                body_to_xml[rep] = rep
+
+        def resolve_body(name: str) -> str:
+            return body_to_xml.get(name, name)
+
         equality = etree.SubElement(mujoco, "equality")
         equality.append(etree.Comment(
             " Loop-closing constraints for closed kinematic chains "
         ))
 
         for i, cj in enumerate(ktree.cut_joints):
-            body1 = cj.occurrence_one.replace(":", "_").replace(" ", "_")
-            body2 = cj.occurrence_two.replace(":", "_").replace(" ", "_")
+            body1_raw = cj.occurrence_one.replace(":", "_").replace(" ", "_")
+            body2_raw = cj.occurrence_two.replace(":", "_").replace(" ", "_")
             joint_name = cj.name.replace(":", "_") if cj.name else f"loop_{i}"
 
-            # Verify both bodies exist
-            b1 = model.get_body(body1)
-            b2 = model.get_body(body2)
+            # Resolve through rigid groups for MuJoCo XML body references
+            body1 = resolve_body(body1_raw)
+            body2 = resolve_body(body2_raw)
+
+            if body1 == body2:
+                logger.debug(
+                    "Cut joint '%s': both bodies in same rigid group, skipping",
+                    joint_name,
+                )
+                continue
+
+            # Get the actual Body objects (use raw name, not group name)
+            b1 = model.get_body(body1_raw)
+            b2 = model.get_body(body2_raw)
             if b1 is None or b2 is None:
                 logger.warning(
                     "Cut joint '%s': body not found (%s or %s), skipping",
-                    joint_name, body1, body2,
+                    joint_name, body1_raw, body2_raw,
                 )
                 continue
 
             if cj.origin is None:
-                logger.warning(
-                    "Cut joint '%s': no origin, using weld constraint",
-                    joint_name,
-                )
-                etree.SubElement(
-                    equality, "weld",
-                    name=joint_name,
-                    body1=body1,
-                    body2=body2,
+                # For mate/flush loop closures: add virtual coupler bodies.
+                # MuJoCo connect pins anchor (in body1) to body2's ORIGIN.
+                # Since neither body's origin is at the coupler, we add
+                # lightweight virtual bodies at the estimated coupler point
+                # on each arm, then connect those (like the end_effector
+                # pattern in standard MuJoCo 5-bar models).
+                self._add_virtual_coupler_connect(
+                    mujoco, equality, joint_name,
+                    b1, b2, body1, body2, ktree,
                 )
                 continue
 
@@ -458,6 +515,141 @@ class MuJoCoWriter:
                     body1=body1, body2=body2,
                     anchor=anchor_str,
                 )
+
+    # ------------------------------------------------------------------
+    # Virtual coupler bodies for loop closure
+    # ------------------------------------------------------------------
+
+    def _add_virtual_coupler_connect(
+        self,
+        mujoco: etree._Element,
+        equality: etree._Element,
+        joint_name: str,
+        b1: Body, b2: Body,
+        body1_xml: str, body2_xml: str,
+        ktree: KinematicTree,
+    ) -> None:
+        """Add virtual coupler bodies and connect constraint for a mate loop.
+
+        Estimates the coupler point (where both arms meet) using
+        ``2*CoM - pivot`` on one arm, then places lightweight virtual
+        bodies at that point on each arm.  The connect constraint between
+        the virtual bodies uses ``anchor="0 0 0"`` — the standard MuJoCo
+        pattern for closed kinematic chains (cf. end_effector in 5-bar
+        examples).
+        """
+        # Estimate coupler in b2's local frame: reflect pivot through CoM
+        coupler_in_b2 = self._estimate_coupler_local(b2, ktree)
+        if coupler_in_b2 is None:
+            # Fallback: try b1 instead
+            coupler_in_b1 = self._estimate_coupler_local(b1, ktree)
+            if coupler_in_b1 is None:
+                logger.warning(
+                    "Cut joint '%s': cannot estimate coupler — "
+                    "using connect at body origins, adjust manually",
+                    joint_name,
+                )
+                etree.SubElement(
+                    equality, "connect", name=joint_name,
+                    body1=body1_xml, body2=body2_xml, anchor="0 0 0",
+                )
+                return
+            # Compute b2's coupler from b1's world position
+            coupler_world = (b1.transform.rotation @ np.array(coupler_in_b1)
+                             + b1.transform.position)
+            coupler_in_b2 = tuple(
+                b2.transform.rotation.T @ (coupler_world - b2.transform.position)
+            )
+        else:
+            # Compute b1's coupler from b2's world position
+            coupler_world = (b2.transform.rotation @ np.array(coupler_in_b2)
+                             + b2.transform.position)
+            coupler_in_b1 = tuple(
+                b1.transform.rotation.T @ (coupler_world - b1.transform.position)
+            )
+
+        logger.info(
+            "Loop '%s': coupler_in_%s=%s, coupler_in_%s=%s",
+            joint_name, body1_xml, coupler_in_b1, body2_xml, coupler_in_b2,
+        )
+
+        # Find the body elements in the XML tree and add virtual children
+        b1_elem = mujoco.find(f".//body[@name='{body1_xml}']")
+        b2_elem = mujoco.find(f".//body[@name='{body2_xml}']")
+        if b1_elem is None or b2_elem is None:
+            logger.warning("Could not find body elements for virtual couplers")
+            etree.SubElement(
+                equality, "connect", name=joint_name,
+                body1=body1_xml, body2=body2_xml, anchor="0 0 0",
+            )
+            return
+
+        coupler_a = f"{joint_name}_coupler_a"
+        coupler_b = f"{joint_name}_coupler_b"
+
+        vc1 = etree.SubElement(
+            b1_elem, "body", name=coupler_a,
+            pos=_format_pos(coupler_in_b1),
+        )
+        etree.SubElement(
+            vc1, "inertial", pos="0 0 0", mass="0.0001",
+            diaginertia="1e-9 1e-9 1e-9",
+        )
+
+        vc2 = etree.SubElement(
+            b2_elem, "body", name=coupler_b,
+            pos=_format_pos(coupler_in_b2),
+        )
+        etree.SubElement(
+            vc2, "inertial", pos="0 0 0", mass="0.0001",
+            diaginertia="1e-9 1e-9 1e-9",
+        )
+
+        etree.SubElement(
+            equality, "connect", name=joint_name,
+            body1=coupler_a, body2=coupler_b, anchor="0 0 0",
+        )
+
+    @staticmethod
+    def _estimate_coupler_local(
+        body: Body, ktree: KinematicTree,
+    ) -> "tuple[float, float, float] | None":
+        """Estimate the coupler end of an arm in its local frame.
+
+        Uses ``2*CoM - pivot`` — reflects the pivot (joint) through the
+        center of mass to approximate the far end of the arm.
+        """
+        joint_info = ktree.joint_for.get(body.name)
+        if joint_info is None or body.inertia is None:
+            return None
+
+        is_flipped = body.name in ktree.flipped
+
+        # Get pivot in the body's LOCAL frame (not the parent's frame)
+        pivot = None
+        if is_flipped:
+            # Flipped: occurrence_one is parent, occurrence_two is child (this body).
+            # origin_two is in OccurrenceTwo's frame = this body's frame.
+            if joint_info.origin_two is not None:
+                pivot = np.array(joint_info.origin_two)
+            # IMPORTANT: do NOT fall back to joint_info.origin here — it's
+            # in the parent's frame, which would produce a wrong estimate.
+        else:
+            # Normal: occurrence_one is child (this body).
+            # origin is in OccurrenceOne's frame = this body's frame.
+            if joint_info.origin is not None:
+                pivot = np.array(joint_info.origin)
+
+        if pivot is None:
+            logger.warning(
+                "Cannot estimate coupler for '%s': no origin in body's local frame",
+                body.name,
+            )
+            return None
+
+        com = np.array(body.inertia.center_of_mass)
+        coupler = 2.0 * com - pivot
+        return tuple(coupler)
 
     # ------------------------------------------------------------------
     # Rigid group (multiple parts merged into one body)
@@ -525,6 +717,46 @@ class MuJoCoWriter:
             etree.SubElement(body_elem, "geom", **attribs)
 
         return body_elem
+
+    # ------------------------------------------------------------------
+    # Joint default scaling
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _compute_joint_defaults(model: AssemblyModel) -> tuple[str, str]:
+        """Compute damping and frictionloss scaled to mechanism mass.
+
+        Reference point: at m_char=0.1 kg, damping=0.005, frictionloss=0.005.
+        Damping scales linearly with mass (velocity-dependent force must not
+        overwhelm small inertias).  Friction loss scales inversely with
+        mass^0.7 (constant drag prevents velocity runaway on light parts).
+        """
+        _M_REF = 0.1  # reference mass (kg)
+        _DAMP_REF = 0.005
+        _FRIC_REF = 0.005
+
+        masses = [
+            b.inertia.mass
+            for b in model.bodies
+            if b.inertia is not None and b.inertia.mass > 0
+        ]
+        if not masses:
+            return str(_DAMP_REF), str(_FRIC_REF)
+
+        masses.sort()
+        m_char = masses[len(masses) // 2]  # median
+
+        damping = _DAMP_REF * (m_char / _M_REF)
+        damping = max(1e-5, min(damping, 0.1))
+
+        frictionloss = _FRIC_REF * (_M_REF / m_char) ** 0.7
+        frictionloss = max(0.001, min(frictionloss, 1.0))
+
+        logger.info(
+            "Joint defaults: m_char=%.4f kg -> damping=%.6f, frictionloss=%.6f",
+            m_char, damping, frictionloss,
+        )
+        return f"{damping:.6g}", f"{frictionloss:.6g}"
 
     # ------------------------------------------------------------------
     # Inertial

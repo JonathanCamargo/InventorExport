@@ -75,8 +75,13 @@ def list_formats_callback(ctx, param, value):
     default=True,
     help='Show warnings about closed kinematic loops (default: on).'
 )
+@click.option(
+    '--topology',
+    is_flag=True,
+    help='Save a topology graph image (PNG) alongside the output file.'
+)
 @click.version_option(version=__version__)
-def main(format: str, output: str, verbose: bool, debug_transforms: bool, warn_loops: bool):
+def main(format: str, output: str, verbose: bool, debug_transforms: bool, warn_loops: bool, topology: bool):
     """Export Autodesk Inventor assembly to simulation format.
 
     Connects to a running Inventor instance and exports the active
@@ -114,6 +119,7 @@ def main(format: str, output: str, verbose: bool, debug_transforms: bool, warn_l
                     [b.name for b in model.bodies],
                     model.constraints,
                     ground=model.ground_body,
+                    rigid_groups=rigid,
                 )
                 if ktree.has_loops:
                     click.echo(
@@ -147,6 +153,36 @@ def main(format: str, output: str, verbose: bool, debug_transforms: bool, warn_l
         writer.write(model, output_path)
 
         click.echo(f"Exported to {output_path}")
+
+        # Topology graph
+        if topology:
+            try:
+                from inventor_exporter.model.topology import (
+                    build_topology_graph,
+                    draw_topology,
+                )
+                if not model.constraints:
+                    click.echo("  No constraints — skipping topology graph")
+                else:
+                    topo_groups = model.rigid_groups()
+                    ktree_topo = classify_joints(
+                        [b.name for b in model.bodies],
+                        model.constraints,
+                        ground=model.ground_body,
+                        rigid_groups=topo_groups,
+                    )
+                    topo_graph = build_topology_graph(
+                        model, ktree_topo, topo_groups,
+                    )
+                    topo_path = output_path.with_suffix(".topology.png")
+                    draw_topology(topo_graph, topo_path, title=model.name)
+                    click.echo(f"  Topology graph: {topo_path}")
+            except ImportError:
+                click.echo(
+                    "  Topology graph requires networkx and matplotlib "
+                    "(pip install networkx matplotlib)",
+                    err=True,
+                )
 
     except InventorNotRunningError:
         raise click.ClickException(
