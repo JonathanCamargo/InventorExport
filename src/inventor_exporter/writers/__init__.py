@@ -24,11 +24,13 @@ from inventor_exporter.writers import mujoco  # noqa: F401
 from inventor_exporter.writers import sdf  # noqa: F401
 
 
-def get_writer(format_name: str) -> FormatWriter:
+def get_writer(format_name: str, collision_mode: str = "mesh") -> FormatWriter:
     """Get an instantiated writer by format name.
 
     Args:
         format_name: The format name (e.g., 'adams').
+        collision_mode: Collision mesh strategy ("mesh" or "coacd").
+            Passed to writers that support mesh-based collision.
 
     Returns:
         Instantiated writer ready to use.
@@ -37,7 +39,11 @@ def get_writer(format_name: str) -> FormatWriter:
         KeyError: If format is not registered.
     """
     writer_cls = WriterRegistry.get_or_raise(format_name)
-    return writer_cls()
+    # Pass collision_mode to writers that accept it
+    try:
+        return writer_cls(collision_mode=collision_mode)
+    except TypeError:
+        return writer_cls()
 
 
 __all__ = [

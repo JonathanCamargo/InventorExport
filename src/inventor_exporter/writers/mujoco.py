@@ -82,8 +82,13 @@ class MuJoCoWriter:
     format_name: str = "mujoco"
     file_extension: str = ".xml"
 
-    def __init__(self, mesh_subdir: str = "meshes"):
+    def __init__(
+        self,
+        mesh_subdir: str = "meshes",
+        collision_mode: str = "mesh",
+    ):
         self._mesh_subdir = mesh_subdir
+        self._collision_mode = collision_mode
 
     def write(self, model: AssemblyModel, output_path: Path) -> None:
         errors = model.validate()
@@ -93,10 +98,14 @@ class MuJoCoWriter:
             )
 
         output_dir = output_path.parent
-        converter = MeshConverter(output_dir, mesh_subdir=self._mesh_subdir)
+        converter = MeshConverter(
+            output_dir,
+            mesh_subdir=self._mesh_subdir,
+            collision_mode=self._collision_mode,
+        )
 
         mesh_names = self._convert_meshes(model, converter)
-        root = self._build_mujoco_tree(model, mesh_names)
+        root = self._build_mujoco_tree(model, mesh_names, converter)
 
         tree = etree.ElementTree(root)
         output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -131,7 +140,10 @@ class MuJoCoWriter:
     # ------------------------------------------------------------------
 
     def _build_mujoco_tree(
-        self, model: AssemblyModel, mesh_names: dict[str, str]
+        self,
+        model: AssemblyModel,
+        mesh_names: dict[str, str],
+        converter: MeshConverter,
     ) -> etree._Element:
         mujoco = etree.Element("mujoco", model=model.name)
 
@@ -152,10 +164,19 @@ class MuJoCoWriter:
         etree.SubElement(
             default, "joint", damping=damping, frictionloss=frictionloss,
         )
+        if self._collision_mode == "coacd":
+            collision_default = etree.SubElement(
+                default, "default", **{"class": "collision"}
+            )
+            etree.SubElement(
+                collision_default, "geom",
+                contype="1", conaffinity="1",
+                group="3",
+            )
 
         # Assets
         asset = etree.SubElement(mujoco, "asset")
-        self._add_mesh_assets(asset, mesh_names)
+        self._add_mesh_assets(asset, mesh_names, converter)
         self._add_material_assets(asset, model.materials)
 
         # Constraint / joint metadata as comments
@@ -181,11 +202,17 @@ class MuJoCoWriter:
             self._add_body_recursive(
                 worldbody, body, None, None, False,
                 model, mesh_names, ktree, groups, emitted,
+                converter,
             )
 
         # Equality constraints for closed-loop cut joints
         if ktree.cut_joints:
             self._add_equality_constraints(mujoco, ktree, model, groups)
+
+        # Contact exclusions for connected bodies (prevents collision
+        # between parent-child pairs whose geometry overlaps at joints)
+        if self._collision_mode == "coacd":
+            self._add_contact_excludes(mujoco, ktree, groups)
 
         return mujoco
 
@@ -224,14 +251,26 @@ class MuJoCoWriter:
     # ------------------------------------------------------------------
 
     def _add_mesh_assets(
-        self, asset: etree._Element, mesh_names: dict[str, str]
+        self,
+        asset: etree._Element,
+        mesh_names: dict[str, str],
+        converter: MeshConverter,
     ) -> None:
         mm_to_m = "0.001 0.001 0.001"
         for body_name, mesh_name in mesh_names.items():
+            # Visual mesh asset
             etree.SubElement(
                 asset, "mesh",
                 name=mesh_name, file=f"{mesh_name}.stl", scale=mm_to_m,
             )
+            # Collision mesh assets (CoACD convex parts)
+            if self._collision_mode == "coacd":
+                for col_path in converter.get_collision_paths(mesh_name):
+                    col_name = col_path.stem
+                    etree.SubElement(
+                        asset, "mesh",
+                        name=col_name, file=col_path.name, scale=mm_to_m,
+                    )
 
     def _add_material_assets(
         self, asset: etree._Element, materials: tuple[Material, ...]
@@ -257,6 +296,7 @@ class MuJoCoWriter:
         ktree: KinematicTree,
         groups: dict[str, list[str]],
         emitted: set[str],
+        converter: MeshConverter,
     ) -> None:
         """Add a body and recursively nest its children."""
         if body.name in emitted:
@@ -296,6 +336,7 @@ class MuJoCoWriter:
                 parent_elem, group_members, model, mesh_names,
                 pos_str, quat_str, joint_info, body.transform,
                 origin_override=origin_override,
+                converter=converter,
             )
             emitted.update(group_members)
         else:
@@ -316,6 +357,14 @@ class MuJoCoWriter:
                 if body.material_name is not None:
                     attribs["material"] = body.material_name
                 etree.SubElement(body_elem, "geom", **attribs)
+                # CoACD collision geoms
+                if self._collision_mode == "coacd":
+                    for col_path in converter.get_collision_paths(mesh_name):
+                        etree.SubElement(
+                            body_elem, "geom",
+                            type="mesh", mesh=col_path.stem,
+                            **{"class": "collision"},
+                        )
             emitted.add(body.name)
 
         # Recurse into children.
@@ -336,6 +385,7 @@ class MuJoCoWriter:
                         ktree.joint_for.get(child_name),
                         child_flipped,
                         model, mesh_names, ktree, groups, emitted,
+                        converter,
                     )
 
     # ------------------------------------------------------------------
@@ -517,6 +567,72 @@ class MuJoCoWriter:
                 )
 
     # ------------------------------------------------------------------
+    # Contact exclusions for connected bodies
+    # ------------------------------------------------------------------
+
+    def _add_contact_excludes(
+        self,
+        mujoco: etree._Element,
+        ktree: KinematicTree,
+        groups: dict[str, list[str]],
+    ) -> None:
+        """Add <contact><exclude> pairs for parent-child body pairs.
+
+        Prevents collision geometry from fighting at joints where parts
+        overlap. Rigid group members are already in the same <body> so
+        MuJoCo handles those automatically.
+        """
+        # Build body name -> MuJoCo XML body name mapping
+        body_to_xml: dict[str, str] = {}
+        for rep, members in groups.items():
+            if len(members) > 1:
+                xml_name = "_".join(members[:2]) + "_group"
+                for m in members:
+                    body_to_xml[m] = xml_name
+            else:
+                body_to_xml[rep] = rep
+
+        def resolve(name: str) -> str:
+            return body_to_xml.get(name, name)
+
+        # Collect unique exclude pairs
+        pairs: set[tuple[str, str]] = set()
+        for child_name, parent_name in ktree.parent_of.items():
+            b1 = resolve(child_name)
+            b2 = resolve(parent_name)
+            if b1 == b2:
+                continue  # same rigid group body — no collision anyway
+            pair = (min(b1, b2), max(b1, b2))
+            pairs.add(pair)
+
+        # Also exclude cut-joint body pairs (loop closures)
+        for cj in ktree.cut_joints:
+            b1 = resolve(
+                cj.occurrence_one.replace(":", "_").replace(" ", "_")
+            )
+            b2 = resolve(
+                cj.occurrence_two.replace(":", "_").replace(" ", "_")
+            )
+            if b1 != b2:
+                pair = (min(b1, b2), max(b1, b2))
+                pairs.add(pair)
+
+        if not pairs:
+            return
+
+        contact = mujoco.find("contact")
+        if contact is None:
+            contact = etree.SubElement(mujoco, "contact")
+        contact.append(etree.Comment(
+            " Exclude collisions between connected bodies "
+        ))
+        for b1, b2 in sorted(pairs):
+            etree.SubElement(
+                contact, "exclude", name=f"no_{b1}_{b2}",
+                body1=b1, body2=b2,
+            )
+
+    # ------------------------------------------------------------------
     # Virtual coupler bodies for loop closure
     # ------------------------------------------------------------------
 
@@ -666,6 +782,7 @@ class MuJoCoWriter:
         joint_info: Optional[ConstraintInfo],
         body_transform: Optional[Transform] = None,
         origin_override: Optional[tuple[float, float, float]] = None,
+        converter: Optional[MeshConverter] = None,
     ) -> etree._Element:
         """Create a merged body element for a rigid group. Returns the element."""
         primary = model.get_body(member_names[0])
@@ -710,11 +827,24 @@ class MuJoCoWriter:
             attribs: dict[str, str] = {"type": "mesh", "mesh": mname}
             if b.material_name is not None:
                 attribs["material"] = b.material_name
+            rel_attribs: dict[str, str] = {}
             if primary is not None and bname != primary.name:
                 rel = b.transform.relative_to(primary.transform)
-                attribs["pos"] = _format_pos(rel.position)
-                attribs["quat"] = _format_quat(rel.rotation)
+                rel_attribs["pos"] = _format_pos(rel.position)
+                rel_attribs["quat"] = _format_quat(rel.rotation)
+                attribs.update(rel_attribs)
             etree.SubElement(body_elem, "geom", **attribs)
+
+            # CoACD collision geoms for this member
+            if self._collision_mode == "coacd" and converter is not None:
+                for col_path in converter.get_collision_paths(mname):
+                    col_attribs: dict[str, str] = {
+                        "type": "mesh",
+                        "mesh": col_path.stem,
+                        "class": "collision",
+                    }
+                    col_attribs.update(rel_attribs)
+                    etree.SubElement(body_elem, "geom", **col_attribs)
 
         return body_elem
 

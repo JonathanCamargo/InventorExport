@@ -71,8 +71,13 @@ class URDFWriter:
     format_name: str = "urdf"
     file_extension: str = ".urdf"
 
-    def __init__(self, mesh_tolerance: float = 0.1):
+    def __init__(
+        self,
+        mesh_tolerance: float = 0.1,
+        collision_mode: str = "mesh",
+    ):
         self._mesh_tolerance = mesh_tolerance
+        self._collision_mode = collision_mode
 
     def write(self, model: AssemblyModel, output_path: Path) -> None:
         errors = model.validate()
@@ -82,7 +87,11 @@ class URDFWriter:
             )
 
         output_dir = output_path.parent
-        mesh_converter = MeshConverter(output_dir, mesh_subdir="meshes")
+        mesh_converter = MeshConverter(
+            output_dir,
+            mesh_subdir="meshes",
+            collision_mode=self._collision_mode,
+        )
 
         robot = self._build_robot_element(model, mesh_converter)
 
@@ -195,6 +204,10 @@ class URDFWriter:
         # Cut joints: Gazebo extensions for loop closure
         if ktree.cut_joints:
             self._add_gazebo_loop_joints(robot, ktree, model, _link_name_for)
+
+        # Disable collisions between connected links when CoACD is active
+        if self._collision_mode == "coacd":
+            self._add_collision_filters(robot, ktree, groups, _link_name_for)
 
         return robot
 
@@ -325,6 +338,53 @@ class URDFWriter:
                 )
 
     # ------------------------------------------------------------------
+    # Collision filtering for connected links
+    # ------------------------------------------------------------------
+
+    def _add_collision_filters(
+        self,
+        robot: etree._Element,
+        ktree: KinematicTree,
+        groups: dict[str, list[str]],
+        link_name_fn,
+    ) -> None:
+        """Add <gazebo> tags to disable collisions between connected links.
+
+        Most URDF consumers auto-filter adjacent link collisions, but
+        Gazebo requires explicit ``<disable_collisions>`` when using
+        convex collision meshes that extend beyond the joint interface.
+        """
+        # Collect unique link pairs
+        pairs: set[tuple[str, str]] = set()
+        for child_name, parent_name in ktree.parent_of.items():
+            l1 = link_name_fn(child_name)
+            l2 = link_name_fn(parent_name)
+            if l1 == l2:
+                continue
+            pair = (min(l1, l2), max(l1, l2))
+            pairs.add(pair)
+        for cj in ktree.cut_joints:
+            b1 = cj.occurrence_one.replace(":", "_").replace(" ", "_")
+            b2 = cj.occurrence_two.replace(":", "_").replace(" ", "_")
+            l1 = link_name_fn(b1)
+            l2 = link_name_fn(b2)
+            if l1 != l2:
+                pair = (min(l1, l2), max(l1, l2))
+                pairs.add(pair)
+
+        if not pairs:
+            return
+
+        robot.append(etree.Comment(
+            " === Collision Filtering (connected links) === "
+        ))
+        for l1, l2 in sorted(pairs):
+            gazebo = etree.SubElement(robot, "gazebo", reference=l1)
+            etree.SubElement(
+                gazebo, "disable_collisions", link=l2
+            ).text = "true"
+
+    # ------------------------------------------------------------------
     # Constraint comments
     # ------------------------------------------------------------------
 
@@ -389,7 +449,7 @@ class URDFWriter:
         mesh_path = self._convert_mesh(body, mesh_converter)
         if mesh_path is not None:
             self._add_visual(link, body, mesh_path)
-            self._add_collision(link, body, mesh_path)
+            self._add_collisions(link, body.name, mesh_path, mesh_converter)
 
     # ------------------------------------------------------------------
     # Rigid group link
@@ -448,11 +508,15 @@ class URDFWriter:
             if b.material_name:
                 etree.SubElement(visual, "material", name=b.material_name)
 
-            # Collision
-            collision = etree.SubElement(link, "collision")
-            etree.SubElement(collision, "origin", xyz=xyz, rpy=rpy)
-            geom = etree.SubElement(collision, "geometry")
-            etree.SubElement(geom, "mesh", filename=fname, scale="0.001 0.001 0.001")
+            # Collision (convex parts if CoACD, else full mesh)
+            for col_path in mesh_converter.get_collision_paths(bname):
+                collision = etree.SubElement(link, "collision")
+                etree.SubElement(collision, "origin", xyz=xyz, rpy=rpy)
+                geom = etree.SubElement(collision, "geometry")
+                col_fname = str(col_path).replace("\\", "/")
+                etree.SubElement(
+                    geom, "mesh", filename=col_fname, scale="0.001 0.001 0.001"
+                )
 
         return group_name
 
@@ -501,14 +565,21 @@ class URDFWriter:
         if body.material_name:
             etree.SubElement(visual, "material", name=body.material_name)
 
-    def _add_collision(
-        self, link: etree._Element, body: Body, mesh_path: Path
+    def _add_collisions(
+        self,
+        link: etree._Element,
+        mesh_name: str,
+        mesh_path: Path,
+        mesh_converter: MeshConverter,
     ) -> None:
-        collision = etree.SubElement(link, "collision")
-        etree.SubElement(collision, "origin", xyz="0 0 0", rpy="0 0 0")
-        geometry = etree.SubElement(collision, "geometry")
-        fname = str(mesh_path).replace("\\", "/")
-        etree.SubElement(geometry, "mesh", filename=fname, scale="0.001 0.001 0.001")
+        for col_path in mesh_converter.get_collision_paths(mesh_name):
+            collision = etree.SubElement(link, "collision")
+            etree.SubElement(collision, "origin", xyz="0 0 0", rpy="0 0 0")
+            geometry = etree.SubElement(collision, "geometry")
+            fname = str(col_path).replace("\\", "/")
+            etree.SubElement(
+                geometry, "mesh", filename=fname, scale="0.001 0.001 0.001"
+            )
 
     def _add_fixed_joint(
         self, parent: etree._Element, link_name: str, body: Body

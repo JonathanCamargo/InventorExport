@@ -58,6 +58,9 @@ class SDFWriter:
     format_name: str = "sdf"
     file_extension: str = ".sdf"
 
+    def __init__(self, collision_mode: str = "mesh"):
+        self._collision_mode = collision_mode
+
     def write(self, model: AssemblyModel, output_path: Path) -> None:
         errors = model.validate()
         if errors:
@@ -66,7 +69,11 @@ class SDFWriter:
             )
 
         output_dir = output_path.parent
-        mesh_converter = MeshConverter(output_dir, mesh_subdir="meshes")
+        mesh_converter = MeshConverter(
+            output_dir,
+            mesh_subdir="meshes",
+            collision_mode=self._collision_mode,
+        )
         self._convert_meshes(model, mesh_converter)
 
         root = self._build_sdf_tree(model, mesh_converter)
@@ -95,6 +102,12 @@ class SDFWriter:
     ) -> etree._Element:
         sdf = etree.Element("sdf", version="1.8")
         model_elem = etree.SubElement(sdf, "model", name=model.name)
+
+        # Disable self-collision between connected links when using
+        # convex collision meshes (prevents geometry fighting at joints)
+        if self._collision_mode == "coacd":
+            sc = etree.SubElement(model_elem, "self_collide")
+            sc.text = "false"
 
         # Constraint / joint metadata
         if model.constraints:
@@ -287,7 +300,7 @@ class SDFWriter:
         if body.geometry_file is not None:
             mesh_path = mesh_converter.get_mesh_path(body.name)
             self._add_visual(link, mesh_path)
-            self._add_collision(link, mesh_path)
+            self._add_collisions(link, body.name, mesh_converter)
 
     # ------------------------------------------------------------------
     # Rigid group link
@@ -345,16 +358,26 @@ class SDFWriter:
             scale = etree.SubElement(mesh, "scale")
             scale.text = "0.001 0.001 0.001"
 
-            # Collision
-            collision = etree.SubElement(link, "collision", name=f"{bname}_collision")
-            cpose = etree.SubElement(collision, "pose")
-            cpose.text = _format_pose(rel.position, rel.rotation)
-            geom = etree.SubElement(collision, "geometry")
-            mesh = etree.SubElement(geom, "mesh")
-            uri = etree.SubElement(mesh, "uri")
-            uri.text = str(mesh_path).replace("\\", "/")
-            scale = etree.SubElement(mesh, "scale")
-            scale.text = "0.001 0.001 0.001"
+            # Collision (convex parts if CoACD, else full mesh)
+            for ci, col_path in enumerate(
+                mesh_converter.get_collision_paths(bname)
+            ):
+                col_name = (
+                    f"{bname}_collision_{ci}"
+                    if self._collision_mode == "coacd"
+                    else f"{bname}_collision"
+                )
+                collision = etree.SubElement(
+                    link, "collision", name=col_name
+                )
+                cpose = etree.SubElement(collision, "pose")
+                cpose.text = _format_pose(rel.position, rel.rotation)
+                geom = etree.SubElement(collision, "geometry")
+                mesh = etree.SubElement(geom, "mesh")
+                uri = etree.SubElement(mesh, "uri")
+                uri.text = str(col_path).replace("\\", "/")
+                scale = etree.SubElement(mesh, "scale")
+                scale.text = "0.001 0.001 0.001"
 
         return group_name, primary
 
@@ -389,16 +412,27 @@ class SDFWriter:
         scale = etree.SubElement(mesh, "scale")
         scale.text = "0.001 0.001 0.001"
 
-    def _add_collision(
-        self, link: etree._Element, mesh_path: Path
+    def _add_collisions(
+        self,
+        link: etree._Element,
+        mesh_name: str,
+        mesh_converter: MeshConverter,
     ) -> None:
-        collision = etree.SubElement(link, "collision", name="collision")
-        geometry = etree.SubElement(collision, "geometry")
-        mesh = etree.SubElement(geometry, "mesh")
-        uri = etree.SubElement(mesh, "uri")
-        uri.text = str(mesh_path).replace("\\", "/")
-        scale = etree.SubElement(mesh, "scale")
-        scale.text = "0.001 0.001 0.001"
+        for i, col_path in enumerate(
+            mesh_converter.get_collision_paths(mesh_name)
+        ):
+            col_name = (
+                f"collision_{i}"
+                if self._collision_mode == "coacd"
+                else "collision"
+            )
+            collision = etree.SubElement(link, "collision", name=col_name)
+            geometry = etree.SubElement(collision, "geometry")
+            mesh = etree.SubElement(geometry, "mesh")
+            uri = etree.SubElement(mesh, "uri")
+            uri.text = str(col_path).replace("\\", "/")
+            scale = etree.SubElement(mesh, "scale")
+            scale.text = "0.001 0.001 0.001"
 
     def _add_fixed_joint(self, parent: etree._Element, link_name: str) -> None:
         joint = etree.SubElement(

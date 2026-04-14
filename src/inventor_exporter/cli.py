@@ -80,8 +80,16 @@ def list_formats_callback(ctx, param, value):
     is_flag=True,
     help='Save a topology graph image (PNG) alongside the output file.'
 )
+@click.option(
+    '--collision',
+    type=click.Choice(['mesh', 'coacd'], case_sensitive=False),
+    default='mesh',
+    help='Collision mesh strategy. "mesh" uses the visual mesh (default). '
+         '"coacd" decomposes into convex parts via CoACD '
+         '(requires: pip install coacd trimesh).'
+)
 @click.version_option(version=__version__)
-def main(format: str, output: str, verbose: bool, debug_transforms: bool, warn_loops: bool, topology: bool):
+def main(format: str, output: str, verbose: bool, debug_transforms: bool, warn_loops: bool, topology: bool, collision: str):
     """Export Autodesk Inventor assembly to simulation format.
 
     Connects to a running Inventor instance and exports the active
@@ -148,8 +156,11 @@ def main(format: str, output: str, verbose: bool, debug_transforms: bool, warn_l
             click.echo(f"  Bodies without geometry: {', '.join(missing_geometry)}")
 
         # Get writer and export
-        click.echo(f"Writing {format} format...")
-        writer = get_writer(format)
+        collision_note = ""
+        if collision != "mesh":
+            collision_note = f" (collision: {collision})"
+        click.echo(f"Writing {format} format{collision_note}...")
+        writer = get_writer(format, collision_mode=collision)
         writer.write(model, output_path)
 
         click.echo(f"Exported to {output_path}")

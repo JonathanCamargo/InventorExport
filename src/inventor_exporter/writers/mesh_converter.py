@@ -6,12 +6,20 @@ that require STL mesh files instead of STEP geometry.
 Uses CadQuery for STEP import and STL export. If CadQuery is not available,
 provides clear error message with installation instructions.
 
+Supports optional convex decomposition via CoACD for collision meshes.
+
 Example:
     from inventor_exporter.writers.mesh_converter import MeshConverter
 
     converter = MeshConverter(Path("output"), mesh_subdir="meshes")
     mesh_path = converter.convert(Path("part.step"), "part1")
     # Returns Path("meshes/part1.stl") - relative from output directory
+
+    # With CoACD convex decomposition for collision:
+    converter = MeshConverter(Path("output"), collision_mode="coacd")
+    mesh_path = converter.convert(Path("part.step"), "part1")
+    collision_paths = converter.get_collision_paths("part1")
+    # Returns [Path("meshes/part1_collision_0.stl"), ...]
 """
 
 import logging
@@ -24,6 +32,15 @@ try:
     CADQUERY_AVAILABLE = True
 except ImportError:
     CADQUERY_AVAILABLE = False
+
+# Attempt to import CoACD and trimesh
+try:
+    import coacd
+    import trimesh
+
+    COACD_AVAILABLE = True
+except ImportError:
+    COACD_AVAILABLE = False
 
 logger = logging.getLogger(__name__)
 
@@ -88,6 +105,7 @@ class MeshConverter:
     Attributes:
         output_dir: Base output directory for the export.
         mesh_subdir: Name of the mesh subdirectory (default "meshes").
+        collision_mode: Collision mesh strategy ("mesh" or "coacd").
 
     Example:
         converter = MeshConverter(Path("output"), mesh_subdir="meshes")
@@ -99,18 +117,34 @@ class MeshConverter:
         # Get relative path for XML reference
         xml_path = converter.get_mesh_path("part1")
         # Returns Path("meshes/part1.stl")
+
+        # With CoACD collision decomposition:
+        converter = MeshConverter(Path("output"), collision_mode="coacd")
+        rel_path = converter.convert(Path("parts/part1.step"), "part1")
+        collision_paths = converter.get_collision_paths("part1")
+        # Returns [Path("meshes/part1_collision_0.stl"), ...]
     """
 
-    def __init__(self, output_dir: Path, mesh_subdir: str = "meshes"):
+    def __init__(
+        self,
+        output_dir: Path,
+        mesh_subdir: str = "meshes",
+        collision_mode: str = "mesh",
+    ):
         """Initialize mesh converter.
 
         Args:
             output_dir: Base directory for export output.
             mesh_subdir: Name of subdirectory for mesh files. Default "meshes".
+            collision_mode: Collision mesh strategy. "mesh" uses the visual
+                mesh for collision. "coacd" decomposes into convex parts
+                via CoACD. Default "mesh".
         """
         self._output_dir = output_dir
         self._mesh_subdir = mesh_subdir
+        self._collision_mode = collision_mode
         self._converted: dict[str, Path] = {}  # mesh_name -> absolute stl_path
+        self._collision_meshes: dict[str, list[Path]] = {}  # mesh_name -> rel paths
 
     @property
     def output_dir(self) -> Path:
@@ -180,6 +214,10 @@ class MeshConverter:
         # Cache the result
         self._converted[mesh_name] = stl_path
 
+        # Run convex decomposition if requested
+        if self._collision_mode == "coacd":
+            self._decompose_coacd(stl_path, mesh_name)
+
         return self.get_mesh_path(mesh_name)
 
     def get_mesh_path(self, mesh_name: str) -> Path:
@@ -194,9 +232,88 @@ class MeshConverter:
         """
         return Path(self._mesh_subdir) / f"{mesh_name}.stl"
 
+    @property
+    def collision_mode(self) -> str:
+        """Active collision mesh strategy."""
+        return self._collision_mode
+
+    def get_collision_paths(self, mesh_name: str) -> list[Path]:
+        """Get collision mesh paths for a body.
+
+        For "mesh" mode, returns a single-element list with the visual mesh.
+        For "coacd" mode, returns the list of convex decomposition pieces.
+
+        Args:
+            mesh_name: Name of the mesh (without extension).
+
+        Returns:
+            List of relative paths from output_dir to collision mesh files.
+        """
+        if mesh_name in self._collision_meshes:
+            return self._collision_meshes[mesh_name]
+        return [self.get_mesh_path(mesh_name)]
+
+    def _decompose_coacd(self, stl_path: Path, mesh_name: str) -> None:
+        """Decompose an STL mesh into convex parts using CoACD.
+
+        Results are cached in self._collision_meshes.
+
+        Args:
+            stl_path: Absolute path to the source STL file.
+            mesh_name: Base name for output files.
+        """
+        if not COACD_AVAILABLE:
+            raise RuntimeError(
+                "coacd and trimesh are required for convex decomposition. "
+                "Install with: pip install coacd trimesh"
+            )
+
+        # Check if collision meshes already exist on disk
+        first_part = self.mesh_dir / f"{mesh_name}_collision_0.stl"
+        if first_part.exists() and mesh_name not in self._collision_meshes:
+            # Discover existing parts
+            existing = sorted(self.mesh_dir.glob(f"{mesh_name}_collision_*.stl"))
+            if existing:
+                self._collision_meshes[mesh_name] = [
+                    Path(self._mesh_subdir) / p.name for p in existing
+                ]
+                logger.debug(
+                    "Found %d existing collision meshes for %s",
+                    len(existing), mesh_name,
+                )
+                return
+
+        logger.debug("Running CoACD decomposition on %s", stl_path)
+
+        mesh = trimesh.load(str(stl_path), force="mesh")
+        parts = coacd.run_coacd(mesh)
+
+        collision_paths: list[Path] = []
+        for i, part in enumerate(parts):
+            part_name = f"{mesh_name}_collision_{i}"
+            part_path = self.mesh_dir / f"{part_name}.stl"
+            # CoACD may return trimesh objects or (vertices, faces) tuples
+            if isinstance(part, trimesh.Trimesh):
+                part.export(str(part_path))
+            else:
+                verts, faces = part
+                trimesh.Trimesh(
+                    vertices=verts, faces=faces
+                ).export(str(part_path))
+            collision_paths.append(
+                Path(self._mesh_subdir) / f"{part_name}.stl"
+            )
+
+        self._collision_meshes[mesh_name] = collision_paths
+        logger.debug(
+            "CoACD: %s decomposed into %d convex parts",
+            mesh_name, len(collision_paths),
+        )
+
     def clear_cache(self) -> None:
         """Clear the conversion cache.
 
         Useful if you want to force reconversion of previously converted meshes.
         """
         self._converted.clear()
+        self._collision_meshes.clear()
