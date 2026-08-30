@@ -123,12 +123,14 @@ class URDFWriter:
             self._add_material(robot, material)
 
         # Build kinematic tree
-        groups = model.rigid_groups()
+        aliases = model.occurrence_aliases()
+        groups = model.rigid_groups(occurrence_aliases=aliases)
         ktree = classify_joints(
             [b.name for b in model.bodies],
             model.constraints,
             ground=model.ground_body,
             rigid_groups=groups,
+            occurrence_aliases=aliases,
         )
 
         # Base link

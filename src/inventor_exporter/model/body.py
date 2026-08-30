@@ -36,6 +36,9 @@ class Body:
         inertia: Optional mass properties. If provided, includes mass,
             center of mass, and inertia tensor.
         geometry_file: Optional path to exported geometry (e.g., STEP file).
+        ancestors: Sanitized names of ancestor subassembly occurrences
+            (root first). Joints often reference these instead of leaf
+            part names; used to resolve kinematic relationships.
 
     Examples:
         >>> from inventor_exporter.model import Transform
@@ -53,6 +56,7 @@ class Body:
     material_name: Optional[str] = None
     inertia: Optional[Inertia] = None
     geometry_file: Optional[Path] = None
+    ancestors: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         """Sanitize name and validate after initialization."""
@@ -61,6 +65,15 @@ class Body:
 
         # Use object.__setattr__ since frozen=True prevents direct assignment
         object.__setattr__(self, "name", sanitized)
+
+        # Sanitize ancestor subassembly names the same way
+        object.__setattr__(
+            self,
+            "ancestors",
+            tuple(
+                a.replace(":", "_").replace(" ", "_") for a in self.ancestors
+            ),
+        )
 
         # Validate name is not empty after sanitization
         if not self.name:

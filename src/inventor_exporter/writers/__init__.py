@@ -22,6 +22,7 @@ from inventor_exporter.writers import adams  # noqa: F401
 from inventor_exporter.writers import urdf  # noqa: F401
 from inventor_exporter.writers import mujoco  # noqa: F401
 from inventor_exporter.writers import sdf  # noqa: F401
+from inventor_exporter.writers import gltf  # noqa: F401
 
 
 def get_writer(format_name: str, collision_mode: str = "mesh") -> FormatWriter:

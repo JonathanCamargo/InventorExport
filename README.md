@@ -35,6 +35,10 @@ inventorexport --format mujoco --output model.xml
 # Export to SDF (Gazebo)
 inventorexport --format sdf --output model.sdf
 
+# Export to glTF / GLB (Khronos, viewable in web viewers, Blender, three.js)
+inventorexport --format glb --output model.glb    # binary (recommended)
+inventorexport --format gltf --output model.gltf  # JSON + embedded buffer
+
 # List available formats
 inventorexport --list-formats
 ```
@@ -47,6 +51,69 @@ inventorexport --list-formats
 | URDF | `.urdf` | `.stl` (meshes/) |
 | SDF | `.sdf` | `.stl` (meshes/) |
 | MuJoCo | `.xml` | `.stl` (meshes/) |
+| glTF/GLB | `.gltf` / `.glb` | Embedded in file (single-file output) |
+
+### glTF/GLB export
+
+The `glb`/`gltf` formats produce self-contained files viewable in Blender,
+web viewers (three.js, `<model-viewer>`), Windows 3D Viewer, and most game
+engines:
+
+- **Geometry**: STEP files are meshed and embedded directly into the file —
+  no external mesh folder needed. Binary STLs are also accepted as input.
+- **Units**: vertices are converted from mm (pipeline meshes) to meters
+  (glTF requirement) automatically.
+- **Orientation**: a root node converts Inventor's Z-up to glTF's Y-up.
+- **Hierarchy**: nodes follow the kinematic spanning tree (same structure as
+  URDF/MuJoCo); rigid groups are merged into a single node.
+- **Skeleton**: each part becomes a **bone** in a glTF skin (armature)
+  following the kinematic tree, with meshes rigid-skinned to their bone —
+  Blender, Unity, and Unreal import an animatable skeleton, and the joint
+  structure defined in Inventor is preserved in the node graph. Closed-loop
+  joints cannot live in the tree (glTF nodes are strictly hierarchical) and
+  ride along in `extras` instead.
+- **Materials**: PBR `pbrMetallicRoughness` with colors inferred from
+  material names (steel, aluminum, plastic, rubber).
+- **Joints**: glTF has no core joint concept, so constraint metadata
+  (type, axis, origin, limits) is exported into the top-level `extras` field.
+- **Reuse**: existing STL meshes in `meshes/` are reused without
+  reconversion, so switching between URDF/MuJoCo and GLB exports of the same
+  assembly is fast.
+- **Mesh size**: glTF meshes use a coarser default tolerance (0.5 mm) than
+  URDF/MuJoCo (0.1 mm) since GLB is typically used for visualization. File
+  size scales with triangle count.
+
+⚠️ **Stale mesh cache**: `MeshConverter` skips conversion when an STL with
+the expected name already exists in `meshes/` — regardless of the tolerance
+it was originally produced with. If you change tolerance settings (or
+upgrade from an older version), **delete the `meshes/` folder before
+re-exporting**, otherwise the old meshes are silently reused:
+
+```powershell
+Remove-Item -Recurse -Force path\to\output\meshes
+inventorexport --format glb --output model.glb
+```
+
+To diagnose a large GLB, check which parts carry the most triangles:
+
+```powershell
+foreach ($f in Get-ChildItem path\to\output\meshes\*.stl) {
+  $n = [BitConverter]::ToUInt32((Get-Content $f.FullName -Encoding Byte -TotalCount 84 -ReadCount 0), 80)
+  "{0,10:N0} tris  {1,8:N1} KB  {2}" -f $n, ($f.Length/1KB), $f.Name
+}
+```
+
+For further web-size reduction, post-process with
+[gltfpack](https://github.com/zeux/meshoptimizer/tree/master/gltf)
+(installs via npm):
+
+```bash
+gltfpack -i model.glb -o model_web.glb -cc -si 0.5
+```
+
+`-cc` applies meshopt compression (typically 5–10× smaller); `-si 0.5`
+simplifies meshes another 50%. Meshopt-compressed files load directly in
+three.js and `<model-viewer>`.
 
 ## STL Import
 
@@ -103,6 +170,7 @@ The format writers account for the mm mesh / meters body mismatch:
 | MuJoCo | meters | mm | `scale="0.001 0.001 0.001"` on `<mesh>` |
 | URDF | meters | mm | `scale="0.001 0.001 0.001"` on `<mesh>` |
 | SDF | meters | mm | `<scale>0.001 0.001 0.001</scale>` |
+| glTF/GLB | meters | mm | Vertex data scaled by 0.001 when embedding |
 | ADAMS | mm | N/A (uses STEP) | No conversion needed |
 
 ### Debugging transform issues
@@ -135,7 +203,7 @@ pytest tests/writers/test_urdf.py
 tests/
   core/           # Unit conversion, rotation math, COM utilities
   model/          # Data model (Transform, Body, AssemblyModel)
-  writers/        # Format writers (ADAMS, URDF, SDF, MuJoCo)
+  writers/        # Format writers (ADAMS, URDF, SDF, MuJoCo, glTF/GLB)
   extraction/     # Inventor data extraction (mocked)
   cli/            # CLI integration tests
 ```

@@ -21,6 +21,7 @@ from typing import Any, Dict, Optional
 
 from inventor_exporter.core.com import inventor_app, active_assembly
 from inventor_exporter.extraction.assembly import (
+    detect_ground_body,
     traverse_assembly,
     traverse_assembly_recursive,
 )
@@ -184,15 +185,23 @@ class InventorClient:
         except Exception as e:
             self.logger.warning(f"Failed to extract constraints: {e}")
 
-        # Step 6: Build AssemblyModel
-        model = AssemblyModel(
-            name=assembly_name,
-            bodies=tuple(bodies),
-            materials=materials,
-            constraints=tuple(constraint_infos),
-        )
+        # Step 6: Identify the grounded body — it anchors the kinematic
+        # tree, so without it the spanning tree is rooted on whichever body
+        # happens to have the most joints and comes out inverted.
+        ground_body = detect_ground_body(doc)
 
-        # Step 7: Validate and return
+        # Step 7: Build AssemblyModel
+        model_kwargs = {
+            "name": assembly_name,
+            "bodies": tuple(bodies),
+            "materials": materials,
+            "constraints": tuple(constraint_infos),
+        }
+        if ground_body is not None:
+            model_kwargs["ground_body"] = ground_body
+        model = AssemblyModel(**model_kwargs)
+
+        # Step 8: Validate and return
         errors = model.validate()
         if errors:
             for error in errors:
@@ -252,4 +261,5 @@ class InventorClient:
             material_name=material_name,
             inertia=inertia,
             geometry_file=geometry_file,
+            ancestors=tuple(occ.ancestors),
         )

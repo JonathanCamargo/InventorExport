@@ -6,6 +6,93 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [Unreleased]
+
+### Fixed: joints referencing subassemblies now build the kinematic chain
+
+Real Inventor assemblies attach joints to **subassembly occurrences**
+(`Link1:1`), not to individual parts — but the exporter built bodies from
+leaf parts only (`1_30_00268_391`), so joint references matched nothing and
+every assembly exported as a flat skeleton (one bone per part, zero
+hierarchy). A 5-axis palletizer exported as 19 disconnected bones instead
+of a 6-link / 5-joint armature.
+
+- **Extraction** now records each leaf occurrence's ancestor subassembly
+  names (`Body.ancestors`).
+- **`AssemblyModel.occurrence_aliases()`** maps subassembly names to their
+  leaf bodies; `rigid_groups()` fuses leaf bodies beneath a
+  constraint-referenced subassembly into one rigid link (matching Inventor
+  semantics: a joint on a subassembly moves its contents as one body).
+- **`classify_joints()`** resolves constraint occurrence names through the
+  aliases, so joints between subassemblies create real hierarchy edges.
+- All writers (glTF, URDF, SDF, MuJoCo) and the CLI use alias-aware tree
+  construction. The glTF writer also fixes internal node-linking bugs this
+  uncovered (member meshes overwriting tree children; group nodes dropped
+  from the scene root).
+- Regression test reproduces the palletizer topology: joints naming
+  `Link1:1`/`base:1` over leaf-part bodies produce correct bone→bone
+  hierarchy.
+
+### New: glTF 2.0 / GLB export (`--format gltf` / `--format glb`)
+
+- Export assemblies to the Khronos glTF 2.0 format — viewable in Blender,
+  three.js / `<model-viewer>` web viewers, Windows 3D Viewer, and game
+  engines.
+- **`--format glb`** writes the binary container (JSON chunk + BIN chunk);
+  **`--format gltf`** writes JSON with a base64 data-URI buffer. Both are
+  self-contained: geometry, materials, and hierarchy in a single file.
+- Geometry is meshed from the STEP files via the existing STL pipeline,
+  scaled from mm to meters, and embedded with flat per-vertex normals.
+- Node hierarchy follows the kinematic spanning tree (rigid groups merged
+  into a single node with per-part children); a root node rotates the scene
+  from Inventor's Z-up to glTF's required Y-up.
+- **Skeleton/armature**: a glTF `skin` is emitted whose joints follow the
+  kinematic spanning tree. Meshes are rigid-skinned to their bones
+  (`JOINTS_0`/`WEIGHTS_0` with all weight on the owning bone) and the skin
+  carries inverse-bind matrices, so Blender, Unity, and Unreal import an
+  animatable armature with one bone per part. Disable with
+  `GLTFWriter(enable_skin=False)`.
+  - `JOINTS_0` uses skin-relative indices with UNSIGNED_SHORT components
+    (spec-required type; three.js rejects other types), unused VEC4 slots
+    zeroed.
+  - **Rigid joints = one bone**: parts fused by rigid constraints collapse
+    into a single rigid body / single bone (matching Inventor semantics);
+    each member keeps its own mesh skinned to the shared bone. Only
+    kinematic joints (revolute, slider, ...) create hierarchy edges
+    between bones.
+  - Vertex data is stored in world space (incl. Y-up root rotation) so the
+    rigid-skin algebra `global_joint @ IBM @ v` evaluates exactly at bind
+    pose; inverse bind matrices are flattened column-major per glTF spec.
+  - Output passes the official Khronos glTF validator with **0 errors**
+    (3 informational warnings remain, standard for skeletal hierarchies).
+- PBR materials (`pbrMetallicRoughness`) with colors inferred from material
+  names (steel, aluminum, plastic, rubber).
+- Constraint/joint metadata (type, occurrence names, axis, origin, limits)
+  exported in the top-level `extras` field since glTF core has no joint
+  concept.
+- New `load_stl()` helper parses binary and ASCII STL files for embedding.
+- **Web default tolerance 0.5 mm** (URDF/MuJoCo remain 0.1 mm), with angular
+  tolerance ramped alongside — rounded parts are angle-dominated, so a
+  coarser linear deflection alone would not shrink them.
+- **Fixed: mesh tolerance was silently ignored.** cadquery 2.8's
+  `Shape.exportStl` passes deflection through the positional
+  `BRepMesh_IncrementalMesh` constructor, which does not honor it (a sphere
+  produced byte-identical output at tolerance 0.05 and 50).
+  `convert_step_to_stl` now uses the OCCT `IMeshTools_Parameters` API
+  directly and calls `BRepTools.Clean_s` first so re-meshing at a new
+  tolerance is not short-circuited by cached triangulation. In practice:
+  a test sphere+cylinder assembly went from 599 KB to 74 KB at 0.5 mm.
+- **Known caveat**: `MeshConverter` skips conversion when an STL with the
+  expected name already exists in `meshes/`, regardless of the tolerance it
+  was produced with. Delete the `meshes/` folder after changing tolerance
+  settings (documented in README).
+- 26 new tests in `tests/writers/test_gltf.py` (GLB container parsing,
+  node hierarchy, mesh embedding with meter scaling, materials, extras,
+  rigid groups, STL loader), plus a tolerance-propagation test in
+  `test_mesh_converter.py` covering the cadquery bug fix.
+
+---
+
 ## [0.2.0] - 2026-03-09
 
 ### Closed Kinematic Chain Support

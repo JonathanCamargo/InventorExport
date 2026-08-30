@@ -32,12 +32,22 @@ class OccurrenceData:
         transformation: 6-DOF pose in world (assembly) frame
         definition_path: Full file path to the part document (for deduplication)
         part_document: COM reference to the part document (for material/mass extraction)
+        ancestors: Sanitized names of ancestor subassembly occurrences,
+            root first (e.g. ["Link1_1"] for a part inside subassembly
+            "Link1:1"). Empty for top-level leaf parts. Joints frequently
+            reference these subassembly names instead of leaf part names,
+            so the model layer uses them to resolve kinematic relationships.
     """
 
     name: str
     transformation: Transform
     definition_path: str
     part_document: Any  # COM reference - Any since type varies at runtime
+    ancestors: List[str] = None  # type: ignore[assignment]
+
+    def __post_init__(self):
+        if self.ancestors is None:
+            self.ancestors = []
 
 
 def extract_transform(occurrence) -> Transform:
@@ -120,8 +130,16 @@ _PART_DOC_TYPE = 12290       # kPartDocumentObject
 _ASSEMBLY_DOC_TYPE = 12291   # kAssemblyDocumentObject
 
 
-def _recurse_occurrences(occurrences, results: List[OccurrenceData], depth: int):
+def _sanitize(name: str) -> str:
+    """Sanitize occurrence name the same way Body.__post_init__ does."""
+    return name.replace(":", "_").replace(" ", "_")
+
+
+def _recurse_occurrences(occurrences, results: List[OccurrenceData], depth: int,
+                         ancestors: List[str] = None):
     """Walk an Occurrences or SubOccurrences collection."""
+    if ancestors is None:
+        ancestors = []
     try:
         count = occurrences.Count
     except Exception:
@@ -159,6 +177,7 @@ def _recurse_occurrences(occurrences, results: List[OccurrenceData], depth: int)
                         transformation=transform,
                         definition_path=definition_path,
                         part_document=part_document,
+                        ancestors=list(ancestors),
                     ))
                     logger.debug("%sPart: %s", "  " * depth, occ_name)
                 except Exception as e:
@@ -167,11 +186,14 @@ def _recurse_occurrences(occurrences, results: List[OccurrenceData], depth: int)
                     )
 
             elif doc_type == _ASSEMBLY_DOC_TYPE:
-                # Subassembly - recurse
+                # Subassembly - record it as an ancestor and recurse
                 logger.debug("%sSubassembly: %s", "  " * depth, occ_name)
                 try:
                     sub_occs = occ.SubOccurrences
-                    _recurse_occurrences(sub_occs, results, depth + 1)
+                    _recurse_occurrences(
+                        sub_occs, results, depth + 1,
+                        ancestors=ancestors + [_sanitize(occ_name)],
+                    )
                 except Exception as e:
                     logger.warning(
                         "Failed to traverse subassembly %s: %s", occ_name, e
@@ -241,3 +263,49 @@ def traverse_assembly(asm_doc) -> List[OccurrenceData]:
                 del occ
 
     return results
+
+
+def detect_ground_body(asm_doc) -> "str | None":
+    """Find the grounded occurrence that anchors the assembly.
+
+    Inventor's ``ComponentOccurrence.Grounded`` is relative to the assembly
+    that owns the occurrence, so a part marked grounded *inside* a
+    subassembly is merely fixed within that subassembly — nearly every
+    subassembly has one. Only the **top level** identifies the body that is
+    fixed in the world, so this deliberately does not recurse.
+
+    Args:
+        asm_doc: Inventor AssemblyDocument COM object.
+
+    Returns:
+        Sanitized name of the grounded top-level occurrence (matching
+        ``Body.name`` / the subassembly aliases used by
+        ``classify_joints``), or None if nothing is grounded.
+    """
+    try:
+        occurrences = asm_doc.ComponentDefinition.Occurrences
+        count = occurrences.Count
+    except Exception as e:
+        logger.warning("Could not read occurrences to detect ground: %s", e)
+        return None
+
+    grounded: List[str] = []
+    for i in range(1, count + 1):
+        try:
+            occ = occurrences.Item(i)
+            if occ.Grounded:
+                grounded.append(_sanitize(occ.Name))
+        except Exception:
+            continue
+
+    if not grounded:
+        logger.info("No grounded occurrence found at the top level")
+        return None
+    if len(grounded) > 1:
+        logger.info(
+            "Multiple grounded occurrences (%s); using '%s' as the tree root",
+            ", ".join(grounded), grounded[0],
+        )
+    else:
+        logger.info("Ground body: %s", grounded[0])
+    return grounded[0]

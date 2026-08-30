@@ -5,14 +5,14 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "inventor-exporter"
 version = "0.2.0"
-description = "Export Autodesk Inventor assemblies to simulation formats (ADAMS, URDF, MuJoCo)"
+description = "Export Autodesk Inventor assemblies to simulation formats (ADAMS, URDF, MuJoCo, glTF)"
 readme = "README.md"
 license = {text = "MIT"}
 requires-python = ">=3.11"
 authors = [
     {name = "Jonathan", email = "jonathan@example.com"}
 ]
-keywords = ["inventor", "cad", "export", "adams", "urdf", "mujoco", "simulation"]
+keywords = ["inventor", "cad", "export", "adams", "urdf", "mujoco", "gltf", "glb", "simulation"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Science/Research",

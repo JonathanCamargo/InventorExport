@@ -10,6 +10,7 @@ import pytest
 
 from inventor_exporter.extraction import (
     OccurrenceData,
+    detect_ground_body,
     extract_transform,
     traverse_assembly,
 )
@@ -242,3 +243,74 @@ class TestOccurrenceData:
         assert data.transformation is transform
         assert data.definition_path == "C:\\parts\\test.ipt"
         assert data.part_document is doc_mock
+
+
+class TestDetectGroundBody:
+    """Ground detection reads Grounded on TOP-LEVEL occurrences only.
+
+    Inventor's Grounded flag is relative to the owning assembly, so a part
+    grounded inside a subassembly is merely fixed within it — nearly every
+    subassembly has one. Only the top level says what is fixed in the world.
+    """
+
+    def _doc(self, occs):
+        doc = MagicMock()
+        coll = MagicMock()
+        coll.Count = len(occs)
+        coll.Item.side_effect = lambda i: occs[i - 1]
+        doc.ComponentDefinition.Occurrences = coll
+        return doc
+
+    def _occ(self, name, grounded, subs=None):
+        o = MagicMock()
+        o.Name = name
+        o.Grounded = grounded
+        o.DefinitionDocumentType = 12291 if subs else 12290
+        if subs:
+            sub_coll = MagicMock()
+            sub_coll.Count = len(subs)
+            sub_coll.Item.side_effect = lambda i: subs[i - 1]
+            o.SubOccurrences = sub_coll
+        return o
+
+    def test_finds_grounded_top_level(self):
+        doc = self._doc([
+            self._occ("base:1", True),
+            self._occ("Link1:1", False),
+        ])
+        assert detect_ground_body(doc) == "base_1"
+
+    def test_sanitizes_name(self):
+        doc = self._doc([self._occ("my base:2", True)])
+        assert detect_ground_body(doc) == "my_base_2"
+
+    def test_none_when_nothing_grounded(self):
+        doc = self._doc([
+            self._occ("Link1:1", False),
+            self._occ("Link2:1", False),
+        ])
+        assert detect_ground_body(doc) is None
+
+    def test_ignores_grounded_parts_inside_subassemblies(self):
+        # Link1 is not grounded, but the part inside it is. That must not
+        # make Link1 (or its child) the ground.
+        inner = self._occ("part_a", True)
+        doc = self._doc([
+            self._occ("Link1:1", False, subs=[inner]),
+            self._occ("base:1", True),
+        ])
+        assert detect_ground_body(doc) == "base_1"
+
+    def test_first_wins_when_several_grounded(self):
+        doc = self._doc([
+            self._occ("base:1", True),
+            self._occ("fixture:1", True),
+        ])
+        assert detect_ground_body(doc) == "base_1"
+
+    def test_survives_com_errors(self):
+        bad = MagicMock()
+        type(bad).Grounded = PropertyMock(side_effect=Exception("COM boom"))
+        bad.Name = "broken:1"
+        doc = self._doc([bad, self._occ("base:1", True)])
+        assert detect_ground_body(doc) == "base_1"

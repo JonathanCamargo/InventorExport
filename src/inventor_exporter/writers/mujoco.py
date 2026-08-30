@@ -184,12 +184,14 @@ class MuJoCoWriter:
             self._add_constraint_comments(mujoco, model)
 
         # Build kinematic tree with loop detection (rigid-group-aware)
-        groups = model.rigid_groups()
+        aliases = model.occurrence_aliases()
+        groups = model.rigid_groups(occurrence_aliases=aliases)
         ktree = classify_joints(
             [b.name for b in model.bodies],
             model.constraints,
             ground=model.ground_body,
             rigid_groups=groups,
+            occurrence_aliases=aliases,
         )
 
         worldbody = etree.SubElement(mujoco, "worldbody")
@@ -311,13 +313,15 @@ class MuJoCoWriter:
             pos_str = _format_pos(body.transform.position)
             quat_str = _format_quat(body.transform.rotation)
 
-        # Resolve joint origin for flipped joints
+        # Resolve the joint origin into this body's frame. Done for every
+        # joint, not just flipped ones: the origin read off the joint
+        # geometry is in world coordinates and must be transformed.
         origin_override = None
-        if joint_info is not None and is_flipped and parent_body is not None:
+        if joint_info is not None and parent_body is not None:
             origin_override = get_joint_origin_in_child_frame(
                 joint_info,
                 body.name,
-                flipped=True,
+                flipped=is_flipped,
                 child_rotation=body.transform.rotation,
                 parent_rotation=parent_body.transform.rotation,
                 child_position=body.transform.position,

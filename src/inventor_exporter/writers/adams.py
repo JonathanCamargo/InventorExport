@@ -280,8 +280,15 @@ class AdamsWriter:
         lines = []
 
         # Compute joint location in world frame (mm)
-        if constraint.origin is not None:
-            # origin is in OccurrenceOne's local frame -> world
+        world_origin = constraint.world_origin()
+        if world_origin is not None:
+            # Already in assembly world coords — read off the joint geometry
+            loc_mm = np.array(world_origin) * 1000.0
+        elif constraint.origin is not None:
+            # Fallback: a local-frame point. It lives in the frame of the
+            # occurrence that owns the joint geometry, which is b1 only when
+            # the joint was placed on the part itself rather than on a
+            # subassembly containing it.
             origin = np.array(constraint.origin)
             world_pt = b1.transform.rotation @ origin + b1.transform.position
             loc_mm = world_pt * 1000.0

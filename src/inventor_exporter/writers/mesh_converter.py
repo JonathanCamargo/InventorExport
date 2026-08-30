@@ -28,6 +28,10 @@ from pathlib import Path
 # Attempt to import CadQuery
 try:
     import cadquery as cq
+    from OCP.BRepMesh import BRepMesh_IncrementalMesh
+    from OCP.BRepTools import BRepTools
+    from OCP.IMeshTools import IMeshTools_Parameters
+    from OCP.StlAPI import StlAPI_Writer
 
     CADQUERY_AVAILABLE = True
 except ImportError:
@@ -43,6 +47,33 @@ except ImportError:
     COACD_AVAILABLE = False
 
 logger = logging.getLogger(__name__)
+
+
+def _mesh_shape_to_stl(shape, stl_path: Path, tolerance: float, angular_tolerance: float) -> None:
+    """Tessellate a cadquery Shape and write binary STL.
+
+    Uses the OCCT IMeshTools_Parameters API directly. cadquery 2.8's
+    ``Shape.exportStl`` passes deflection through the positional
+    ``BRepMesh_IncrementalMesh`` constructor, which ignores the value
+    (verified: a r=30 sphere produces identical output at tolerance 0.05
+    and 50). The parameters-object API honors deflection/angle as
+    documented.
+
+    ``BRepTools.Clean_s`` is called first so re-meshing the same shape at
+    a new tolerance is not short-circuited by existing triangulation.
+    """
+    BRepTools.Clean_s(shape.wrapped)
+    params = IMeshTools_Parameters()
+    params.Deflection = tolerance
+    params.Angle = angular_tolerance
+    params.Relative = False
+    params.InParallel = True
+    BRepMesh_IncrementalMesh(shape.wrapped, params)
+
+    writer = StlAPI_Writer()
+    writer.ASCIIMode = False
+    if not writer.Write(shape.wrapped, str(stl_path)):
+        raise RuntimeError(f"OCCT STL writer failed for {stl_path}")
 
 
 def convert_step_to_stl(
@@ -77,7 +108,7 @@ def convert_step_to_stl(
     logger.debug("Converting %s to %s", step_path, stl_path)
 
     try:
-        shape = cq.importers.importStep(str(step_path))
+        shape = cq.importers.importStep(str(step_path)).val()
     except Exception as e:
         raise ValueError(f"Failed to import STEP file {step_path}: {e}") from e
 
@@ -85,13 +116,7 @@ def convert_step_to_stl(
     stl_path.parent.mkdir(parents=True, exist_ok=True)
 
     # Export as binary STL (not ASCII - smaller files)
-    cq.exporters.export(
-        shape,
-        str(stl_path),
-        exportType="STL",
-        tolerance=tolerance,
-        angularTolerance=angular_tolerance,
-    )
+    _mesh_shape_to_stl(shape, stl_path, tolerance, angular_tolerance)
 
     logger.debug("Conversion complete: %s", stl_path)
 

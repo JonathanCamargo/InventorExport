@@ -116,7 +116,8 @@ def main(format: str, output: str, verbose: bool, debug_transforms: bool, warn_l
         click.echo(f"  Found {len(model.bodies)} bodies, {len(model.materials)} materials")
         if model.constraints:
             click.echo(f"  Found {len(model.constraints)} constraints/joints")
-            rigid = model.rigid_groups()
+            aliases = model.occurrence_aliases()
+            rigid = model.rigid_groups(occurrence_aliases=aliases)
             n_groups = sum(1 for members in rigid.values() if len(members) > 1)
             if n_groups:
                 click.echo(f"  Identified {n_groups} rigid group(s)")
@@ -128,6 +129,7 @@ def main(format: str, output: str, verbose: bool, debug_transforms: bool, warn_l
                     model.constraints,
                     ground=model.ground_body,
                     rigid_groups=rigid,
+                    occurrence_aliases=aliases,
                 )
                 if ktree.has_loops:
                     click.echo(
@@ -139,6 +141,17 @@ def main(format: str, output: str, verbose: bool, debug_transforms: bool, warn_l
                     )
                     for desc in ktree.describe_loops():
                         click.echo(click.style(f"    {desc}", fg="yellow"))
+        elif len(model.bodies) > 1:
+            click.echo(
+                click.style(
+                    "  WARNING: No constraints or joints were extracted from "
+                    "this assembly. The exported skeleton will be flat "
+                    "(one bone per part, no hierarchy, no motion). If your "
+                    "assembly defines joints, re-run with -v and check for "
+                    "extraction warnings.",
+                    fg="yellow",
+                )
+            )
 
         # Show geometry files
         geometry_files = [b.geometry_file for b in model.bodies if b.geometry_file is not None]
@@ -175,12 +188,16 @@ def main(format: str, output: str, verbose: bool, debug_transforms: bool, warn_l
                 if not model.constraints:
                     click.echo("  No constraints — skipping topology graph")
                 else:
-                    topo_groups = model.rigid_groups()
+                    topo_aliases = model.occurrence_aliases()
+                    topo_groups = model.rigid_groups(
+                        occurrence_aliases=topo_aliases
+                    )
                     ktree_topo = classify_joints(
                         [b.name for b in model.bodies],
                         model.constraints,
                         ground=model.ground_body,
                         rigid_groups=topo_groups,
+                        occurrence_aliases=topo_aliases,
                     )
                     topo_graph = build_topology_graph(
                         model, ktree_topo, topo_groups,

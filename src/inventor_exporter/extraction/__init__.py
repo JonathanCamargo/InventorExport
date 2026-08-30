@@ -25,6 +25,7 @@ from inventor_exporter.extraction.assembly import (
     extract_transform,
     traverse_assembly,
     traverse_assembly_recursive,
+    detect_ground_body,
 )
 from inventor_exporter.extraction.constraints import (
     extract_constraints_and_joints,
@@ -46,6 +47,7 @@ __all__ = [
     "traverse_assembly",
     "traverse_assembly_recursive",
     "extract_transform",
+    "detect_ground_body",
     "extract_constraints_and_joints",
     "OccurrenceData",
     "export_step",

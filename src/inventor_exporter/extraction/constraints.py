@@ -363,69 +363,154 @@ _JOINT_TYPE_NAMES = {
 }
 
 
-def _extract_axis_from_origin(defn, attr_name: str) -> Optional[Tuple[float, float, float]]:
-    """Extract rotation axis from a joint origin's geometry.
+class _OriginGeometry:
+    """Geometry data read off one joint origin, in assembly world coords.
 
-    Tries multiple approaches since the origin geometry type varies:
-    1. DISPID invoke on cylindrical face → Cylinder.AxisVector
-    2. Geometry.AxisVector directly (work axis, edge)
-    3. Geometry.Direction (line-based geometry)
-    4. origin.Direction (some joint origin types)
+    Attributes:
+        axis: Unit axis direction, or None.
+        center: Point on the axis in meters, or None.
+        occurrence: Name of the occurrence owning the geometry, or None.
     """
+
+    __slots__ = ("axis", "center", "occurrence")
+
+    def __init__(self, axis=None, center=None, occurrence=None):
+        self.axis = axis
+        self.center = center
+        self.occurrence = occurrence
+
+
+def _prop(obj, name):
+    """Read a COM property, returning None if it is missing or errors.
+
+    ``getattr(obj, name, None)`` is not enough: late-bound COM raises
+    com_error ("Member not found") as well as AttributeError.
+    """
+    if obj is None:
+        return None
+    try:
+        return getattr(obj, name)
+    except Exception:
+        return None
+
+
+def _vec(v) -> Optional[Tuple[float, float, float]]:
+    """Read a COM Vector/UnitVector as a 3-tuple, rejecting 2D objects."""
+    try:
+        out = (float(v.X), float(v.Y), float(v.Z))
+    except Exception:
+        return None
+    return out
+
+
+def _unit(v: Optional[Tuple[float, float, float]]) -> Optional[Tuple[float, float, float]]:
+    """Normalise a direction vector, discarding degenerate ones."""
+    if v is None:
+        return None
+    n = float(np.linalg.norm(v))
+    if n < 1e-12:
+        return None
+    return (v[0] / n, v[1] / n, v[2] / n)
+
+
+def _inner_geometry(entity):
+    """Get the curve/surface behind a Face/Edge proxy.
+
+    ``entity.Geometry`` works for both, but late binding occasionally fails
+    on Face proxies, so fall back to invoking Face.Geometry by DISPID.
+    """
+    try:
+        return late_bind(entity.Geometry)
+    except Exception:
+        pass
+    try:
+        raw = entity._oleobj_.Invoke(
+            _FACE_GEOMETRY_DISPID, 0, pythoncom.DISPATCH_PROPERTYGET, True
+        )
+        return win32com.client.dynamic.Dispatch(
+            raw.QueryInterface(pythoncom.IID_IDispatch)
+        )
+    except Exception:
+        return None
+
+
+def _extract_origin_geometry(defn, attr_name: str) -> _OriginGeometry:
+    """Read axis + on-axis point from a joint origin's geometry.
+
+    A joint origin references an entity in the assembly (a circular edge, a
+    cylindrical or planar face, a work axis, a sketch circle). The entity is
+    an assembly *proxy*, so the geometry it exposes is already in assembly
+    world coordinates — unlike ``origin.Point``, which is in the local frame
+    of the part that owns the entity.
+
+    Handles, in order:
+        - Edge → Arc3d / Circle: ``.Normal`` is the axis, ``.Center`` the point
+        - Edge → Line: ``.Direction``
+        - Face → Cylinder / Cone: ``.AxisVector`` (+ ``.BasePoint`` if present)
+        - Face → Plane: ``.Normal``
+        - Work axis / other: ``.AxisVector`` or ``.Direction`` on the entity
+
+    Returns:
+        _OriginGeometry with whatever could be read (fields may be None).
+    """
+    result = _OriginGeometry()
+
     try:
         origin = late_bind(getattr(defn, attr_name))
     except Exception as e:
         logger.debug("Could not access %s: %s", attr_name, e)
-        return None
+        return result
 
-    # Approach 1: DISPID invoke for cylindrical face geometry
     try:
-        face = late_bind(origin.Geometry)
-        inner_raw = face._oleobj_.Invoke(
-            _FACE_GEOMETRY_DISPID, 0, pythoncom.DISPATCH_PROPERTYGET, True
-        )
-        inner = win32com.client.dynamic.Dispatch(
-            inner_raw.QueryInterface(pythoncom.IID_IDispatch)
-        )
-        av = inner.AxisVector
-        return (float(av.X), float(av.Y), float(av.Z))
+        entity = late_bind(origin.Geometry)
+    except Exception as e:
+        logger.debug("%s has no Geometry: %s", attr_name, e)
+        entity = None
+
+    if entity is None:
+        # Some origin types expose a direction directly.
+        result.axis = _unit(_vec(_prop(origin, "Direction")))
+        return result
+
+    try:
+        result.occurrence = entity.ContainingOccurrence.Name
     except Exception:
         pass
 
-    # Approach 2: Geometry.AxisVector directly (e.g. WorkAxis proxy)
-    try:
-        geom = late_bind(origin.Geometry)
-        av = geom.AxisVector
-        return (float(av.X), float(av.Y), float(av.Z))
-    except Exception:
-        pass
+    inner = _inner_geometry(entity)
 
-    # Approach 3: Geometry.Direction (line-based geometry)
-    try:
-        geom = late_bind(origin.Geometry)
-        d = geom.Direction
-        return (float(d.X), float(d.Y), float(d.Z))
-    except Exception:
-        pass
+    if inner is not None:
+        # Axis: circles/arcs/planes expose Normal, cylinders/cones AxisVector,
+        # lines Direction.
+        for prop in ("Normal", "AxisVector", "Direction"):
+            axis = _unit(_vec(_prop(inner, prop)))
+            if axis is not None:
+                result.axis = axis
+                break
 
-    # Approach 4: origin.Direction
-    try:
-        d = origin.Direction
-        return (float(d.X), float(d.Y), float(d.Z))
-    except Exception:
-        pass
+        # On-axis point: circles and arcs expose Center; cylinders/cones a
+        # BasePoint. A Plane's RootPoint is *not* on the rotation axis, so
+        # it is deliberately not used here.
+        for prop in ("Center", "BasePoint"):
+            pt = _vec(_prop(inner, prop))
+            if pt is not None:
+                result.center = tuple(
+                    InventorUnits.length_to_meters(c) for c in pt
+                )
+                break
 
-    # Approach 5: Geometry is a Line → Line.Direction
-    try:
-        geom = late_bind(origin.Geometry)
-        line = late_bind(geom.Line)
-        d = line.Direction
-        return (float(d.X), float(d.Y), float(d.Z))
-    except Exception:
-        pass
+    if result.axis is None:
+        # Work axes and similar expose the direction on the entity itself.
+        for prop in ("AxisVector", "Direction"):
+            axis = _unit(_vec(_prop(entity, prop)))
+            if axis is not None:
+                result.axis = axis
+                break
 
-    logger.debug("Could not extract axis from %s (all approaches failed)", attr_name)
-    return None
+    if result.axis is None:
+        logger.debug("Could not extract axis from %s", attr_name)
+
+    return result
 
 
 def _extract_axis_from_definition(defn) -> Optional[Tuple[float, float, float]]:
@@ -512,36 +597,37 @@ def _extract_joint(joint) -> "ConstraintInfo | None":
     # --- Geometry (axis, origin, limits) ---
     axis = None
     origin = None
+    origin_two = None
+    origin_world = None
+    origin_two_world = None
+    origin_occurrence = None
+    origin_two_occurrence = None
+    origin_source = "OriginOne"
     limits = None
 
     try:
         defn = joint.Definition
 
-        # Axis direction — extracted from the cylindrical face geometry
-        # on OriginOne (or OriginTwo as fallback).
-        # Late binding can't resolve Face.Geometry on proxy objects,
-        # so we invoke by DISPID to reach the inner Cylinder.AxisVector.
-        axis = _extract_axis_from_origin(defn, "OriginOne")
-        if axis is None:
-            axis = _extract_axis_from_origin(defn, "OriginTwo")
+        # Axis direction and an on-axis point, read from the origin geometry.
+        # The entity is an assembly proxy, so both are in WORLD coordinates.
+        geom_one = _extract_origin_geometry(defn, "OriginOne")
+        geom_two = _extract_origin_geometry(defn, "OriginTwo")
 
-        # Fallback: try to get axis from the definition's own properties
+        axis = geom_one.axis or geom_two.axis
         if axis is None:
             axis = _extract_axis_from_definition(defn)
 
+        origin_world = geom_one.center
+        origin_two_world = geom_two.center
+        origin_occurrence = geom_one.occurrence
+        origin_two_occurrence = geom_two.occurrence
+
         # Origin points — from OriginOne.Point and OriginTwo.Point.
         #
-        # IMPORTANT: Each origin point is in its occurrence's local (part)
-        # frame, NOT in assembly world coordinates. The axis (from face
-        # geometry via assembly proxy) IS in world coordinates.
-        #
-        # We extract both origin points so that the kinematic tree builder
-        # can use the correct one depending on the spanning-tree parent/child
-        # assignment (which may differ from Inventor's OccurrenceOne/Two
-        # order).
-        origin_source = "OriginOne"
-        origin_two = None
-
+        # IMPORTANT: each point is in the local (part) frame of the
+        # occurrence that owns the origin *geometry* — recorded above as
+        # origin_occurrence — which for a joint placed on a subassembly is a
+        # leaf part inside it, NOT OccurrenceOne/Two. Prefer origin_world.
         for attr in ("OriginOne", "OriginTwo"):
             try:
                 pt = getattr(defn, attr).Point
@@ -604,5 +690,9 @@ def _extract_joint(joint) -> "ConstraintInfo | None":
         origin=origin,
         origin_two=origin_two,
         origin_source=origin_source,
+        origin_world=origin_world,
+        origin_two_world=origin_two_world,
+        origin_occurrence=origin_occurrence,
+        origin_two_occurrence=origin_two_occurrence,
         limits=limits,
     )

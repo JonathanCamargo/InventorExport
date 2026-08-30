@@ -88,6 +88,7 @@ def classify_joints(
     constraints: "tuple[ConstraintInfo, ...] | list[ConstraintInfo]",
     ground: str = "",
     rigid_groups: "dict[str, list[str]] | None" = None,
+    occurrence_aliases: "dict[str, list[str]] | None" = None,
 ) -> KinematicTree:
     """Build spanning tree from joints, identify loop-closing cut joints.
 
@@ -99,6 +100,12 @@ def classify_joints(
     treated as a single node so that the BFS can traverse through rigidly
     connected components.
 
+    When ``occurrence_aliases`` is provided (from
+    ``AssemblyModel.occurrence_aliases()``), constraints that reference a
+    *subassembly* name are resolved to the group containing that
+    subassembly's leaf bodies. This is essential for real Inventor
+    assemblies where joints connect subassemblies, not individual parts.
+
     Args:
         body_names: All body names in the assembly.
         constraints: All constraints/joints from the assembly.
@@ -107,6 +114,8 @@ def classify_joints(
         rigid_groups: Dict mapping representative body name to list of
             member body names (from ``AssemblyModel.rigid_groups()``).
             If None, each body is its own group.
+        occurrence_aliases: Dict mapping ancestor subassembly names to
+            member body names. If None, no aliasing is applied.
 
     Returns:
         KinematicTree with spanning tree and cut joints separated.
@@ -119,6 +128,25 @@ def classify_joints(
         for rep, members in rigid_groups.items():
             for m in members:
                 body_to_rep[m] = rep
+            # Alias-named groups: the rep is not itself a body name, but
+            # it is a valid graph node. Register it in body_set and map
+            # the alias name to itself so to_rep() resolves cleanly.
+            if rep not in body_to_rep:
+                body_to_rep[rep] = rep
+
+    # Alias-named group representatives are valid graph nodes
+    body_set |= {
+        rep for rep in (body_to_rep.get(n) for n in body_names) if rep is not None
+    }
+
+    # Map subassembly alias names to their group representative, so that
+    # constraints naming a subassembly resolve to the right node.
+    if occurrence_aliases and rigid_groups:
+        for alias, members in occurrence_aliases.items():
+            for m in members:
+                if m in body_to_rep:
+                    body_to_rep[alias] = body_to_rep[m]
+                    break
 
     def to_rep(name: str) -> str:
         return body_to_rep.get(name, name)
@@ -239,7 +267,9 @@ def get_joint_origin_in_child_frame(
 ) -> Optional[tuple[float, float, float]]:
     """Get joint origin point in the child body's local frame.
 
-    Handles the case where the spanning tree flipped parent/child roles
+    Uses ``constraint.origin_world`` when available, which is unambiguous.
+    Otherwise falls back to the local-frame ``origin``/``origin_two``, which
+    requires knowing whether the spanning tree flipped parent/child roles
     relative to Inventor's OccurrenceOne/Two assignment.
 
     Args:
@@ -254,8 +284,20 @@ def get_joint_origin_in_child_frame(
     Returns:
         Origin point in child's local frame, or None if unavailable.
     """
+    # Preferred path: the joint origin read from the geometry proxy is in
+    # world coordinates, so it can be placed in the child frame directly and
+    # correctly regardless of which occurrence owned the origin geometry.
+    world_origin = constraint.world_origin()
+    if (
+        world_origin is not None
+        and child_rotation is not None
+        and child_position is not None
+    ):
+        world_pt = np.array(world_origin)
+        return tuple(child_rotation.T @ (world_pt - child_position))
+
     if not flipped:
-        # Default: origin is from OriginOne = OccurrenceOne = child's frame
+        # Fallback: origin is from OriginOne = OccurrenceOne = child's frame
         return constraint.origin
 
     # Flipped: occurrence_one is parent, occurrence_two is child.

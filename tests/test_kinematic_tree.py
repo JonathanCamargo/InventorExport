@@ -368,3 +368,147 @@ class TestKinematicTreeProperties:
     def test_describe_loops_empty(self):
         tree = KinematicTree()
         assert tree.describe_loops() == []
+
+
+class TestWorldFrameJointOrigin:
+    """Joint origins read off the geometry proxy are in world coordinates.
+
+    ``origin``/``origin_two`` are in the local frame of whichever occurrence
+    owns the joint geometry — a leaf part, even when the joint names a
+    subassembly — so they cannot be placed without knowing that occurrence.
+    ``origin_world`` is unambiguous and must win.
+    """
+
+    def test_world_origin_prefers_origin_one(self):
+        c = ConstraintInfo(
+            type="rotational_joint",
+            occurrence_one="a",
+            occurrence_two="b",
+            origin_world=(1.0, 2.0, 3.0),
+            origin_two_world=(1.0, 2.5, 3.0),
+        )
+        assert c.world_origin() == (1.0, 2.0, 3.0)
+
+    def test_world_origin_falls_back_to_origin_two(self):
+        # A joint placed on a planar face or sketch circle yields an axis but
+        # no centre for OriginOne; OriginTwo still places it on the axis.
+        c = ConstraintInfo(
+            type="rotational_joint",
+            occurrence_one="a",
+            occurrence_two="b",
+            origin_world=None,
+            origin_two_world=(1.0, 2.5, 3.0),
+        )
+        assert c.world_origin() == (1.0, 2.5, 3.0)
+
+    def test_world_origin_none_when_no_geometry(self):
+        c = ConstraintInfo(
+            type="rotational_joint", occurrence_one="a", occurrence_two="b",
+        )
+        assert c.world_origin() is None
+
+    def test_child_frame_uses_world_origin(self):
+        # Child sits at z=0.5, rotated 90 deg about Z. A joint at world
+        # (0, 0, 0.5) is at the child's own origin.
+        c = ConstraintInfo(
+            type="rotational_joint",
+            occurrence_one="child",
+            occurrence_two="parent",
+            origin=(9.0, 9.0, 9.0),  # bogus local value; must be ignored
+            origin_world=(0.0, 0.0, 0.5),
+        )
+        rot = np.array([[0.0, -1.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]])
+        result = get_joint_origin_in_child_frame(
+            c, "child", flipped=False,
+            child_rotation=rot, child_position=np.array([0.0, 0.0, 0.5]),
+            parent_rotation=np.eye(3), parent_position=np.zeros(3),
+        )
+        np.testing.assert_array_almost_equal(result, [0.0, 0.0, 0.0])
+
+    def test_child_frame_world_origin_wins_when_flipped(self):
+        c = ConstraintInfo(
+            type="rotational_joint",
+            occurrence_one="parent",
+            occurrence_two="child",
+            origin_two=(9.0, 9.0, 9.0),  # bogus; world origin must win
+            origin_world=(0.0, 1.0, 0.0),
+        )
+        result = get_joint_origin_in_child_frame(
+            c, "child", flipped=True,
+            child_rotation=np.eye(3), child_position=np.array([0.0, 0.0, 1.0]),
+            parent_rotation=np.eye(3), parent_position=np.zeros(3),
+        )
+        np.testing.assert_array_almost_equal(result, [0.0, 1.0, -1.0])
+
+    def test_falls_back_to_local_origin_without_transforms(self):
+        c = ConstraintInfo(
+            type="rotational_joint",
+            occurrence_one="child",
+            occurrence_two="parent",
+            origin=(0.1, 0.2, 0.3),
+            origin_world=(1.0, 1.0, 1.0),
+        )
+        assert get_joint_origin_in_child_frame(
+            c, "child", flipped=False
+        ) == (0.1, 0.2, 0.3)
+
+
+class TestGroundRootsTheTree:
+    """The grounded body must root the spanning tree.
+
+    Regression: ``ground`` was never populated, so the root fell back to
+    "most-connected". In a serial chain every interior body ties at degree
+    2, so an arbitrary mid-chain link won and the skeleton came out
+    inverted — the fixed base ended up a leaf.
+    """
+
+    def _chain(self):
+        # base - l1 - l2 - l3 - l4 - l5, all revolute
+        return ["base", "l1", "l2", "l3", "l4", "l5"], [
+            _joint("j1", "l1", "base"),
+            _joint("j2", "l2", "l1"),
+            _joint("j3", "l3", "l2"),
+            _joint("j4", "l5", "l4"),
+            _joint("j5", "l3", "l4"),
+        ]
+
+    def test_ground_becomes_root(self):
+        bodies, joints = self._chain()
+        tree = classify_joints(bodies, joints, ground="base")
+        assert tree.root_bodies == ["base"]
+        assert "base" not in tree.parent_of
+        assert tree.parent_of["l1"] == "base"
+        assert tree.parent_of["l2"] == "l1"
+        assert tree.parent_of["l3"] == "l2"
+        assert tree.parent_of["l4"] == "l3"
+        assert tree.parent_of["l5"] == "l4"
+        assert tree.cut_joints == []
+
+    def test_without_ground_root_is_not_the_base(self):
+        # Documents the fallback this fix exists to avoid: with no ground,
+        # a mid-chain body wins on degree and the base becomes a leaf.
+        bodies, joints = self._chain()
+        tree = classify_joints(bodies, joints)
+        assert tree.root_bodies != ["base"]
+        assert "base" in tree.parent_of
+
+    def test_unknown_ground_name_falls_back(self):
+        bodies, joints = self._chain()
+        tree = classify_joints(bodies, joints, ground="not_a_body")
+        assert len(tree.root_bodies) == 1
+
+    def test_ground_given_as_subassembly_alias(self):
+        # Joints name subassemblies; ground is resolved through the same
+        # alias map, so a subassembly name must root the tree too.
+        bodies = ["base_a", "base_b", "arm_a"]
+        joints = [_joint("j1", "arm_1", "base_1")]
+        aliases = {"base_1": ["base_a", "base_b"], "arm_1": ["arm_a"]}
+        groups = {"base_a": ["base_a", "base_b"], "arm_a": ["arm_a"]}
+        tree = classify_joints(
+            bodies, joints, ground="base_1",
+            rigid_groups=groups, occurrence_aliases=aliases,
+        )
+        # base_b has no parent because it is fused into base_a's group
+        assert "base_a" in tree.root_bodies
+        assert "base_a" not in tree.parent_of
+        assert tree.parent_of["arm_a"] == "base_a"

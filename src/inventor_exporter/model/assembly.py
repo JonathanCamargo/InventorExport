@@ -76,16 +76,49 @@ class AssemblyModel:
                 return material
         return None
 
-    def rigid_groups(self) -> dict[str, list[str]]:
+    def occurrence_aliases(self) -> dict[str, list[str]]:
+        """Map ancestor subassembly names to member body names.
+
+        Inventor joints frequently reference a *subassembly* occurrence
+        (e.g. ``Link1:1``) rather than the leaf parts inside it. This
+        builds alias -> [body names] from each body's recorded ancestors,
+        so kinematic constraints naming a subassembly can be resolved to
+        the bodies underneath it.
+
+        Returns:
+            Dict mapping each ancestor name to the list of body names
+            that live underneath it.
+        """
+        aliases: dict[str, list[str]] = {}
+        for body in self.bodies:
+            for ancestor in body.ancestors:
+                aliases.setdefault(ancestor, []).append(body.name)
+        return aliases
+
+    def rigid_groups(
+        self, occurrence_aliases: "dict[str, list[str]] | None" = None
+    ) -> dict[str, list[str]]:
         """Compute groups of bodies rigidly connected by constraints/joints.
 
         Uses Union-Find over rigid constraints. Constraint occurrence names
         are sanitized the same way as Body.name (colons/spaces to underscores).
 
+        Additionally, when a constraint references a *subassembly* name
+        (via ``occurrence_aliases``), all leaf bodies underneath that
+        subassembly are fused into one rigid unit — matching Inventor
+        semantics where a joint on a subassembly moves its contents as
+        one body. This is what turns joint references like ``Link1:1``
+        into a single link made of many leaf parts.
+
+        Args:
+            occurrence_aliases: Precomputed aliases from
+                ``occurrence_aliases()``. Computed if None.
+
         Returns:
             Dict mapping group representative name to list of body names.
             Every body appears in exactly one group; unconstrained bodies
-            are in single-element groups.
+            are in single-element groups. Fused subassembly groups use the
+            subassembly's sanitized name as representative.
         """
         body_names = [b.name for b in self.bodies]
         parent = {n: n for n in body_names}
@@ -110,10 +143,44 @@ class AssemblyModel:
             if n1 in body_name_set and n2 in body_name_set:
                 union(n1, n2)
 
-        groups: dict[str, list[str]] = {}
+        # Fuse bodies under subassemblies that any constraint references:
+        # the constraint names the subassembly, so its contents move as
+        # one kinematic unit. The fused group is renamed to the alias
+        # (subassembly name) so group naming reflects the mechanism link
+        # rather than an arbitrary leaf part.
+        if occurrence_aliases is None:
+            occurrence_aliases = self.occurrence_aliases()
+        if occurrence_aliases:
+            referenced: set[str] = set()
+            for c in self.constraints:
+                referenced.add(c.occurrence_one.replace(":", "_").replace(" ", "_"))
+                referenced.add(c.occurrence_two.replace(":", "_").replace(" ", "_"))
+            for alias, members in occurrence_aliases.items():
+                if alias in referenced and len(members) > 1:
+                    for member in members[1:]:
+                        union(members[0], member)
+                    # Rename the fused group's representative to the alias
+                    old_root = find(members[0])
+                    if old_root != alias and old_root not in referenced:
+                        parent[old_root] = alias
+                        parent[alias] = alias
+
+        groups_temp: dict[str, list[str]] = {}
         for name in body_names:
             root = find(name)
-            groups.setdefault(root, []).append(name)
+            groups_temp.setdefault(root, []).append(name)
+
+        # Groups whose representative is a body must keep that body in the
+        # group; rebuild with stable ordering (alias-named groups first).
+        groups: dict[str, list[str]] = {}
+        for root, members in groups_temp.items():
+            if root in body_name_set:
+                # Representative is a leaf body name: keep it as-is (single
+                # bodies and constraint-fused groups)
+                groups[root] = members
+            else:
+                # Alias-named group: keep
+                groups[root] = members
         return groups
 
     def validate(self) -> list[str]:
